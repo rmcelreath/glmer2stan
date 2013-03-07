@@ -949,30 +949,32 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
             # compute varying component of GLM
             N_all <- nrow(fp[[f]]$dat)
             vary <- rep( 0 , N_all )
-            for ( i in 1:length( fp[[f]]$ranef ) ) {
-                cluster_name <- undot( names(fp[[f]]$ranef)[i] )
-                parname <- paste( vary_prefix , cluster_name , sep="" )
-                nterms <- length( fp[[f]]$ranef[[i]] )
-                total_terms <- sum( cluster_vars[[ cluster_name ]] ) # across all formulas
-                fnames <- fp[[f]]$ranef[[i]]
-                for ( j in 1:nterms ) {
-                    jstart <- 0
-                    if ( f > 1 ) {
-                        jstart <- sum( cluster_vars[[ cluster_name ]][ 1:(f-1) ] )
-                    }
-                    dox <- 1
-                    if ( undot(fnames[j]) != "Intercept" ) {
-                        xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
-                        dox <- data_list[[ xname ]]
-                    }
-                    cname <- paste( cluster_name , var_suffix[f] , sep="" )
-                    if ( total_terms > 1 ) {
-                        vary <- vary + postbar[[ parname ]][ data_list[[cname]] , j+jstart ] * dox
-                    } else {
-                        vary <- vary + postbar[[ parname ]][ data_list[[cname]] ] * dox
-                    }
-                } #j
-            } #i
+            if ( length( fp[[f]]$ranef ) > 0 ) {
+                for ( i in 1:length( fp[[f]]$ranef ) ) {
+                    cluster_name <- undot( names(fp[[f]]$ranef)[i] )
+                    parname <- paste( vary_prefix , cluster_name , sep="" )
+                    nterms <- length( fp[[f]]$ranef[[i]] )
+                    total_terms <- sum( cluster_vars[[ cluster_name ]] ) # across all formulas
+                    fnames <- fp[[f]]$ranef[[i]]
+                    for ( j in 1:nterms ) {
+                        jstart <- 0
+                        if ( f > 1 ) {
+                            jstart <- sum( cluster_vars[[ cluster_name ]][ 1:(f-1) ] )
+                        }
+                        dox <- 1
+                        if ( undot(fnames[j]) != "Intercept" ) {
+                            xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
+                            dox <- data_list[[ xname ]]
+                        }
+                        cname <- paste( cluster_name , var_suffix[f] , sep="" )
+                        if ( total_terms > 1 ) {
+                            vary <- vary + postbar[[ parname ]][ data_list[[cname]] , j+jstart ] * dox
+                        } else {
+                            vary <- vary + postbar[[ parname ]][ data_list[[cname]] ] * dox
+                        }
+                    } #j
+                } #i
+            }
         
             # compute fixed component of GLM
             nterms <- length( fp[[f]]$fixef )

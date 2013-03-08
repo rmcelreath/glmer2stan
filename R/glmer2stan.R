@@ -1,8 +1,9 @@
 # to do:
+# (*) eventually make default chains=4, but need to monitor Rhat
+# (*) make "conjugate" priors for traditional inv_wishart/inv_gamma...these priors suck, but people like them
 # (*) check ordered response to ensure starts at 1
 # (*) vectorize gaussian and bernoulli
-# (*) allow pure fixed effect models?
-# (*) allow passing specific init values for specific named parameters
+# (*) allow passing specific init values for specific named parameters - can just pass a named list and then merge it with the init list?
 # (*) allow passing fit lme4 object
 # (*) allow passing list produced when sample=FALSE 
 # (1) add checks for variable types for zigamma...ensure zero outcome is integer
@@ -188,6 +189,10 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     }
         
     # check params
+    if ( warmup >= iter ) {
+        stop( "Number of iterations (iter) must exceed number of warmup steps (warmup)." )
+    }
+    
     if ( class(family)!="list" ) {
         family <- list(family)
     }
@@ -317,10 +322,17 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     for ( i in 1:num_formulas ) {
         m_data <- paste( m_data , indent , "int N" , var_suffix[i] , ";\n" , sep="" )
     }
+    
     m_transdata1 <- "transformed data{\n"
     m_transdata2 <- ""
     flag_transdata <- FALSE
+    
     m_pars <- "parameters{\n"
+    
+    m_transpars1 <- "transformed parameters{\n"
+    m_transpars2 <- ""
+    flag_transpars <- FALSE
+    
     m_model <- "model{\n    real vary;\n    real glm;\n"
     m_gq <- ""
     flag_intercept <- FALSE
@@ -474,8 +486,18 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                     pars_list <- c( pars_list , paste( "sigma_" , cluster_name , sep="" ) )
                 } else {
                     # add var-cov matrix
-                    m_pars <- paste( m_pars , indent , "cov_matrix[" , num_effects , "] Sigma_" , cluster_name , ";\n" , sep="" )
-                    pars_list <- c( pars_list , paste( "Sigma_" , cluster_name , sep="" ) )
+                    if ( varpriors != "weak" ) {
+                        m_pars <- paste( m_pars , indent , "cov_matrix[" , num_effects , "] Sigma_" , cluster_name , ";\n" , sep="" )
+                        pars_list <- c( pars_list , paste( "Sigma_" , cluster_name , sep="" ) )
+                    } else {
+                        # weak priors, so Sigma_ goes in transformed parameters, and sigma_ and Rho_ go in parameters
+                        m_pars <- paste( m_pars , indent , "vector<lower=0>[" , num_effects , "] sigma_" , cluster_name , ";\n" , sep="" )
+                        m_pars <- paste( m_pars , indent , "corr_matrix[" , num_effects , "] Rho_" , cluster_name , ";\n" , sep="" )
+                        m_transpars1 <- paste( m_transpars1 , indent , "cov_matrix[" , num_effects , "] Sigma_" , cluster_name , ";\n" , sep="" )
+                        m_transpars2 <- paste( m_transpars2 , indent , "Sigma_" , cluster_name , " <- diag_matrix(sigma_" , cluster_name , ") * Rho_" , cluster_name , " * diag_matrix(sigma_" , cluster_name , ");\n" , sep="" )
+                        flag_transpars <- TRUE
+                        pars_list <- c( pars_list , paste( "Sigma_" , cluster_name , sep="" ) ) # monitor transformed var-cov matrix
+                    }
                 }
             }#i
         }
@@ -515,6 +537,13 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                         m_model <- paste( m_model , indent , "sigma_" , name , " ~ uniform( 0 , 100 );\n" , sep="" )
                 } else {
                     if ( varpriors=="weak" ) {
+                        # gamma priors for sd's
+                        m_model <- paste( m_model , indent , "sigma_" , name , " ~ gamma( 2 , 1e-4 );\n" , sep="" )
+                        # m_model <- paste( m_model , indent , "Sigma_" , name , " ~ inv_wishart( " , num_effects+1 , " , Omega_" , name , " );\n" , sep="" )
+                        # lkj_corr eta parameter is 1 for flat prior. 1.5 is a slightly humped prior, excluding very large correlations
+                        m_model <- paste( m_model , indent , "Rho_" , name , " ~ lkj_corr( 1.5 );\n" , sep="" )
+                    }
+                    if ( varpriors=="conjugate" ) {
                         m_model <- paste( m_model , indent , "Sigma_" , name , " ~ inv_wishart( " , num_effects+1 , " , Omega_" , name , " );\n" , sep="" )
                         # add Omega matrix to data block
                         m_data <- paste( m_data , indent , "cov_matrix[" , num_effects , "] Omega_" , name , ";\n" , sep="" )
@@ -809,8 +838,16 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                 name_varcov <- "sigma_"
                 init_varcov <- 1
                 if ( num_effects > 1 ) {
-                    init_varcov <- diag(num_effects)
-                    name_varcov <- "Sigma_"
+                    if ( varpriors == "weak" ) {
+                        # vector of initial standard deviations
+                        init_varcov <- rep( 1 , num_effects )
+                        # corr_matrix
+                        name_rho <- paste( "Rho_" , name , sep="" )
+                        init_list[[ name_rho ]] <- diag(num_effects)
+                    } else {
+                        init_varcov <- diag(num_effects)
+                        name_varcov <- "Sigma_"
+                    }
                 }
                 name_varcov <- paste( name_varcov , name , sep="" )
                 
@@ -876,7 +913,14 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
         m_transdata <- paste( m_transdata1 , m_transdata2 , "}\n\n" , sep="" )
     }
     
-    model <- paste( m_data , "\n" , m_transdata , m_pars , "\n" , m_model , "\n" , m_gq , sep="" )
+    # check for transformed parameters block
+    if ( flag_transpars == FALSE ) {
+        m_transpars <- ""
+    } else {
+        m_transpars <- paste( m_transpars1 , m_transpars2 , "}\n\n" , sep="" )
+    }
+    
+    model <- paste( m_data , "\n" , m_transdata , m_pars , "\n" , m_transpars , m_model , "\n" , m_gq , sep="" )
     
     #################################
     # sample

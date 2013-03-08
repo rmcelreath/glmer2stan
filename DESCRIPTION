@@ -1,7 +1,7 @@
 Package: glmer2stan
 Type: Package
 Title: Rstan models defined by glmer formulas
-Version: 0.97
+Version: 0.98
 Date: 2013-03-07
 Author: Richard McElreath
 Maintainer: Richard McElreath <mcelreath@ucdavis.edu>

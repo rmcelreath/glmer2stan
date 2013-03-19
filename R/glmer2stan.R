@@ -3,7 +3,6 @@
 # (*) eventually make default chains=4, but need to monitor Rhat
 # (*) make "conjugate" priors for traditional inv_wishart/inv_gamma...these priors suck, but people like them
 # (*) check ordered response to ensure starts at 1
-# (*) vectorize gaussian and bernoulli
 # (*) allow passing specific init values for specific named parameters - can just pass a named list and then merge it with the init list?
 # (*) allow passing fit lme4 object
 # (*) allow passing list produced when sample=FALSE 
@@ -340,7 +339,13 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     flag_transpars <- FALSE
     
     # m_model <- "model{\n    real vary;\n    real glm;\n"
-    m_model <- "model{\n    real vary[N];\n    real glm[N];\n"
+    # m_model <- "model{\n    real vary[N];\n    real glm[N];\n"
+    # need one vary[] and glm[] variable for each formula, because of different lengths and vectorizing the densities
+    m_model <- "model{\n"
+    for ( i in 1:num_formulas ) {
+        m_model <- paste( m_model , indent , "real vary" , var_suffix[i] , "[N" , var_suffix[i] , "];\n" , sep="" )
+        m_model <- paste( m_model , indent , "real glm" , var_suffix[i] , "[N" , var_suffix[i] , "];\n" , sep="" )
+    }
     m_gq <- ""
     flag_intercept <- FALSE
     
@@ -613,7 +618,7 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
             if ( length(fp[[f]]$ranef) > 0 ) {
                 vary_terms <- make_vary_text( fp[[f]] , vary_prefix , var_suffix[f] , f )
                 vary_text[[f]] <- paste( vary_terms , collapse=formula_collapse_text )
-                vary_text[[f]] <- paste( indent , indent , "vary[i] <- " , vary_text[[f]] , ";\n" , sep="" )
+                vary_text[[f]] <- paste( indent , indent , "vary" , var_suffix[f] , "[i] <- " , vary_text[[f]] , ";\n" , sep="" )
             } else {
                 # no varying effects for this formula
                 vary_text[[f]] <- ""
@@ -623,9 +628,9 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
             fixed_text[[f]] <- make_fixed_text( fp[[f]] , fixed_prefix , var_suffix[f] , drop_intercept=family[[f]]=="ordered" )
             fixed_text[[f]] <- paste( fixed_text[[f]] , collapse=formula_collapse_text )
             if ( length(fp[[f]]$ranef) > 0 ) {
-                fixed_text[[f]] <- paste( indent , indent , "glm[i] <- vary[i] + " , fixed_text[[f]] , ";\n" , sep="" )
+                fixed_text[[f]] <- paste( indent , indent , "glm" , var_suffix[f] , "[i] <- vary" , var_suffix[f] , "[i] + " , fixed_text[[f]] , ";\n" , sep="" )
             } else {
-                fixed_text[[f]] <- paste( indent , indent , "glm[i] <- " , fixed_text[[f]] , ";\n" , sep="" )
+                fixed_text[[f]] <- paste( indent , indent , "glm" , var_suffix[f] , "[i] <- " , fixed_text[[f]] , ";\n" , sep="" )
             }
             
             # put vary text and fixed text in the N for loop, but don't close loop
@@ -650,9 +655,9 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                     m_model <- paste( m_model , indent , indent , out_var , " ~ bernoulli_logit( glm );" , sep="" )
                 } else {
                     # use vectorized binomial
-                    m_model <- paste( m_model , indent , "glm[i] <- inv_logit( glm[i] );\n" , sep="" )
+                    m_model <- paste( m_model , indent , "glm" , var_suffix[f] , "[i] <- inv_logit( glm" , var_suffix[f] , "[i] );\n" , sep="" )
                     m_model <- paste( m_model , indent , "}\n" , sep="" )
-                    m_model <- paste( m_model , indent , out_var , " ~ binomial( " , bintotname , " , glm );\n" , sep="" )
+                    m_model <- paste( m_model , indent , out_var , " ~ binomial( " , bintotname , " , glm" , var_suffix[f] , " );\n" , sep="" )
                 }
             }
             
@@ -660,28 +665,28 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                 # vectorized normal
                 signame <- paste( "sigma" , var_suffix[f] , sep="" )
                 m_model <- paste( m_model , indent , "}\n" , sep="" )
-                m_model <- paste( m_model , indent , out_var , " ~ normal( glm , " , signame , " );\n" , sep="" )
+                m_model <- paste( m_model , indent , out_var , " ~ normal( glm" , var_suffix[f] , " , " , signame , " );\n" , sep="" )
             }
             
             if ( family[[f]]=="poisson" ) {
                 # vectorized poisson
-                m_model <- paste( m_model , indent , "glm[i] <- exp( glm[i] );\n" , sep="" )
+                m_model <- paste( m_model , indent , "glm[i] <- exp( glm" , var_suffix[f] , "[i] );\n" , sep="" )
                 m_model <- paste( m_model , indent , "}\n" , sep="" )
-                m_model <- paste( m_model , indent , out_var , " ~ poisson( glm );\n" , sep="" )
+                m_model <- paste( m_model , indent , out_var , " ~ poisson( glm" , var_suffix[f] , " );\n" , sep="" )
             }
             
             if ( family[[f]]=="ordered" ) {
                 # can't be vectorized yet?
                 cutsname <- paste( "cutpoints" , var_suffix[f] , sep="" )
-                m_model <- paste( m_model , indent , indent , out_var , "[i] ~ ordered_logistic( glm[i] , " , cutsname , " );\n    }\n" , sep="" )
+                m_model <- paste( m_model , indent , indent , out_var , "[i] ~ ordered_logistic( glm" , var_suffix[f] , "[i] , " , cutsname , " );\n    }\n" , sep="" )
             }
             
             if ( family[[f]]=="gamma" ) {
                 # vectorized gamma
                 thetaname <- paste( "theta" , var_suffix[f] , sep="" )
-                m_model <- paste( m_model , indent , "glm[i] <- exp( glm[i] );\n" , sep="" )
+                m_model <- paste( m_model , indent , "glm" , var_suffix[f] , "[i] <- exp( glm" , var_suffix[f] , "[i] )*" , thetaname , ";\n" , sep="" )
                 m_model <- paste( m_model , indent , "}\n" , sep="" )
-                m_model <- paste( m_model , indent , out_var , " ~ gamma( glm*" , thetaname , " , " , thetaname , " );\n" , sep="" )
+                m_model <- paste( m_model , indent , out_var , " ~ gamma( glm" , var_suffix[f] , " , " , thetaname , " );\n" , sep="" )
             }
             
         }#f
@@ -694,7 +699,12 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     # should consolidate a lot of this code into previous block to reduce code duplication
     
         if ( calcDIC == TRUE ) {
-            m_gq <- "generated quantities{\n    real dev;\n    real vary[N];\n    real glm[N];\n    dev <- 0;\n"
+            m_gq <- "generated quantities{\n    real dev;\n"
+            for ( i in 1:num_formulas ) {
+                m_gq <- paste( m_gq , indent , "real vary" , var_suffix[i] , "[N" , var_suffix[i] , "];\n" , sep="" )
+                m_gq <- paste( m_gq , indent , "real glm" , var_suffix[i] , "[N" , var_suffix[i] , "];\n" , sep="" )
+            }
+            m_gq <- paste( m_gq , indent , "dev <- 0;\n" , sep="" )
             for ( f in 1:num_formulas ) {
                 m_gq <- paste( m_gq , indent , "for ( i in 1:N" , var_suffix[f] , " ) {\n" , sep="" )
                 m_gq <- paste( m_gq , vary_text[[f]] , fixed_text[[f]] , sep="" )
@@ -710,27 +720,27 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                         m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * bernoulli_log( " , out_var , "[i] , inv_logit(glm[i]) );\n" , sep="" )
                     } else {
                         # use binomial
-                        m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * binomial_log( " , out_var , "[i] , " , bintotname , "[i] , inv_logit(glm[i]) );\n" , sep="" )
+                        m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * binomial_log( " , out_var , "[i] , " , bintotname , "[i] , inv_logit(glm" , var_suffix[f] , "[i]) );\n" , sep="" )
                     }
                 }
                 
                 if ( family[[f]]=="gaussian" ) {
                     signame <- paste( "sigma" , var_suffix[f] , sep="" )
-                    m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * normal_log( " , out_var , "[i] , glm[i] , " , signame , " );\n" , sep="" )
+                    m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * normal_log( " , out_var , "[i] , glm" , var_suffix[f] , "[i] , " , signame , " );\n" , sep="" )
                 }
                 
                 if ( family[[f]]=="poisson" ) {
-                    m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * poisson_log( " , out_var , "[i] , exp(glm[i]) );\n" , sep="" )
+                    m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * poisson_log( " , out_var , "[i] , exp(glm" , var_suffix[f] , "[i]) );\n" , sep="" )
                 }
                 
                 if ( family[[f]]=="ordered" ) {
                     cutsname <- paste( "cutpoints" , var_suffix[f] , sep="" )
-                    m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * ordered_logistic_log( " , out_var , "[i] , glm[i] , " , cutsname , " );\n" , sep="" )
+                    m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * ordered_logistic_log( " , out_var , "[i] , glm" , var_suffix[f] , "[i] , " , cutsname , " );\n" , sep="" )
                 }
                 
                 if ( family[[f]]=="gamma" ) {
                     thetaname <- paste( "theta" , var_suffix[f] , sep="" )
-                    m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * gamma_log( " , out_var , "[i] , exp(glm[i])*" , thetaname , " , " , thetaname , " );\n" , sep="" )
+                    m_gq <- paste( m_gq , indent , indent , "dev <- dev + (-2) * gamma_log( " , out_var , "[i] , exp(glm" , var_suffix[f] , "[i])*" , thetaname , " , " , thetaname , " );\n" , sep="" )
                 }
                 
                 # close loop for this formula

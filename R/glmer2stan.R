@@ -172,7 +172,7 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
         fterms
     }
     logistic <- function(x) {
-        p <- exp(x)/(1 + exp(x))
+        p <- 1/(1 + exp(-x))
         p <- ifelse(x == Inf, 1, p)
         p
     }
@@ -655,7 +655,7 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                     m_model <- paste( m_model , indent , indent , out_var , " ~ bernoulli_logit( glm );" , sep="" )
                 } else {
                     # use vectorized binomial
-                    m_model <- paste( m_model , indent , "glm" , var_suffix[f] , "[i] <- inv_logit( glm" , var_suffix[f] , "[i] );\n" , sep="" )
+                    m_model <- paste( m_model , indent , indent , "glm" , var_suffix[f] , "[i] <- inv_logit( glm" , var_suffix[f] , "[i] );\n" , sep="" )
                     m_model <- paste( m_model , indent , "}\n" , sep="" )
                     m_model <- paste( m_model , indent , out_var , " ~ binomial( " , bintotname , " , glm" , var_suffix[f] , " );\n" , sep="" )
                 }
@@ -670,7 +670,7 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
             
             if ( family[[f]]=="poisson" ) {
                 # vectorized poisson
-                m_model <- paste( m_model , indent , "glm[i] <- exp( glm" , var_suffix[f] , "[i] );\n" , sep="" )
+                m_model <- paste( m_model , indent , indent , "glm[i] <- exp( glm" , var_suffix[f] , "[i] );\n" , sep="" )
                 m_model <- paste( m_model , indent , "}\n" , sep="" )
                 m_model <- paste( m_model , indent , out_var , " ~ poisson( glm" , var_suffix[f] , " );\n" , sep="" )
             }
@@ -684,7 +684,7 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
             if ( family[[f]]=="gamma" ) {
                 # vectorized gamma
                 thetaname <- paste( "theta" , var_suffix[f] , sep="" )
-                m_model <- paste( m_model , indent , "glm" , var_suffix[f] , "[i] <- exp( glm" , var_suffix[f] , "[i] )*" , thetaname , ";\n" , sep="" )
+                m_model <- paste( m_model , indent , indent , "glm" , var_suffix[f] , "[i] <- exp( glm" , var_suffix[f] , "[i] )*" , thetaname , ";\n" , sep="" )
                 m_model <- paste( m_model , indent , "}\n" , sep="" )
                 m_model <- paste( m_model , indent , out_var , " ~ gamma( glm" , var_suffix[f] , " , " , thetaname , " );\n" , sep="" )
             }
@@ -796,7 +796,7 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                 data_list[[ vname ]] <- cluster_size[[i]]
             }
         # add diagonal matrices for Sigma priors
-        # these are only used when varpriors="weak"
+        # not used anymore, but were used for wishart cov priors
             for ( i in 1:length(cluster_vars) ) {
                 nterms <- sum( cluster_vars[[i]] )
                 if ( nterms > 1 ) {
@@ -1173,6 +1173,18 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
         }
     }
     attr( result , "ranef" ) <- ranefattr
+    
+    # add parsed formulas, so can use later to compute predictions, etc.
+    attr( result , "formulas" ) <- list(
+        fp = fp ,
+        cluster_vars = cluster_vars ,
+        cluster_size = cluster_size ,
+        var_suffix = var_suffix ,
+        family = family ,
+        formula = formula
+    )
+        
+    # return result
     result
 }
 

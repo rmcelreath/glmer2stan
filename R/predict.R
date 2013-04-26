@@ -1,10 +1,13 @@
 ########################################################################
 # functions to compute posterior predictions from glmer2stan fit models
 
-# by default, computes predictions for observed cases
-# when new data is provided, computes for new cases
+# to do
+# (*) coerce cluster variables to integer
+# (*) replace missing variables with means from data used in fitting
+# (*) when data missing entirely, use data used in fitting
+# (*) structure result as data frame?
 
-stanpredict <- function( stanfit , data=NA , vary_prefix="vary_" , fixed_prefix="beta_" , probs=c(0.025,0.975) , nsims=1e4 , ... ) {
+stanpredict <- function( stanfit , data , vary_prefix="vary_" , fixed_prefix="beta_" , probs=c(0.025,0.975) , nsims=1e4 ) {
     
     undot <- function( astring ) {
         astring <- gsub( "." , "_" , astring , fixed=TRUE )
@@ -20,18 +23,24 @@ stanpredict <- function( stanfit , data=NA , vary_prefix="vary_" , fixed_prefix=
         quantile(samples, probs = c(a, 1 - a))
     }
     
+    logistic <- function (x) 
+    {
+        p <- 1/(1 + exp(-x))
+        p <- ifelse(x == Inf, 1, p)
+        p
+    }
+
     # check params
     
     if ( missing(data) ) {
-        # extract cases from fit
         stop("no data")
     }
     if ( class(stanfit) != "stanfit" ) {
         stop("requires stanfit object")
     }
-    #if ( is.na( attr(stanfit,"formulas") ) ) {
-    #    stop("stanfit object not fit by glmer2stan (cannot parse formulas)")
-    #}
+    if ( is.null( attr(stanfit,"formulas") ) ) {
+        stop("stanfit object not fit by glmer2stan (cannot parse formulas)")
+    }
     
     # compute vary and fixef components of linear model
     # need:
@@ -47,6 +56,27 @@ stanpredict <- function( stanfit , data=NA , vary_prefix="vary_" , fixed_prefix=
     var_suffix <- attr( stanfit , "formulas" )$var_suffix
     family <- attr( stanfit , "formulas" )$family
     formula <- attr( stanfit , "formulas" )$formula
+    
+    # check for missing outcome values in data
+    # don't need outcomes, but design.matrix wants them for its input
+    # so can just add placeholders
+    for ( f in 1:num_formulas ) {
+        data[[ fp[[f]]$yname ]] <- 0
+        # for binomial, also need failure count
+        # so stop and warn user
+        if ( family[[f]]=="binomial" ) {
+            if ( length( formula[[f]][[2]] )==3 ) {
+                # cbind construction
+                bintotname <- deparse( formula[[f]][[2]][[3]] )
+                # check for presence
+                if ( is.null( data[[ bintotname ]] ) )
+                    stop( paste( "Failure count '" , bintotname , "' required as element of data list." , sep="" ) )
+            } else {
+                # bernoulli construction
+                # do nothing for now
+            }
+        }
+    }
     
     # build data (design) matrix by re-parsing formulas with new data frame
     # this is mainly needed so user doesn't have to manually construct interactions
@@ -163,24 +193,27 @@ stanpredict <- function( stanfit , data=NA , vary_prefix="vary_" , fixed_prefix=
         if ( family[[f]] == "gaussian" ) {
             # gaussian noise around mean
             parname <- paste( "sigma" , var_suffix[f] , sep="" )
-            outsim <- sapply( 1:nrow(glm2) , function(i) PCI( 
-                rnorm( nsims , glm2[i,] , post[[parname]] ) ) )
+            outsim <- sapply( 1:nrow(glm2) , function(i) quantile( 
+                rnorm( nsims , glm2[i,] , post[[parname]] ) , probs=probs ) )
         }
         if ( family[[f]] == "binomial" ) {
+            # apply inverse link
+            glm2 <- logistic( glm2 )
+            # simulate
             bintotname <- paste( "bin_total" , var_suffix[f] , sep="" )
-            outsim <- sapply( 1:nrow(glm2) , function(i) PCI( 
-                rbinom( nsims , prob=logistic(glm2[i,]) , size=data_list[[bintotname]][i] )/data_list[[bintotname]][i] ) )
+            outsim <- sapply( 1:nrow(glm2) , function(i) quantile( 
+                rbinom( nsims , prob=glm2[i,] , size=data_list[[bintotname]][i] )/data_list[[bintotname]][i] , probs=probs ) )
         }
         
         # store results
         # compute summary stats
         mu <- apply( glm2 , 1 , mean )
-        ci <- apply( glm2 , 1 , PCI )
+        ci <- apply( glm2 , 1 , quantile , probs=probs )
         obs <- outsim
         
         # result
         # name by outcome variable
-        result[[ fp[[f]]$yname ]] <- list( vary=vary , glm=glm , glm2=glm2 , mu=mu , obs=obs , upper=ci[2,] , lower=ci[1,] , ci=ci )
+        result[[ fp[[f]]$yname ]] <- list( mu=mu , mu.ci=ci , obs.ci=obs )
         
     } #f
 
@@ -198,6 +231,12 @@ stanpredict <- function( stanfit , data=NA , vary_prefix="vary_" , fixed_prefix=
 # z <- stanpredict( m , data=UCBadmit )[[1]]
 # UCBadmit$p.admit <- UCBadmit$admit / UCBadmit$applications
 # plot( UCBadmit$p.admit , ylim=c(0,1) , pch=ifelse(UCBadmit$male==1,16,1) )
-# lines( 1:nrow(UCBadmit) , logistic(z$mu) )
-# shade( logistic(z$ci) , 1:nrow(UCBadmit) )
-# shade( z$obs , 1:nrow(UCBadmit) )
+# lines( 1:nrow(UCBadmit) , z$mu )
+# shade( z$mu.ci , 1:nrow(UCBadmit) )
+# shade( z$obs.ci , 1:nrow(UCBadmit) )
+
+# z <- stanpredict( m , data=list( reject=100 , dept=as.integer(3) , male=c(0,1) ) )[[1]]
+# plot( 0:1 , type="n" , xlim=c(0,1) , ylim=c(0,1) , xlab="female/male" , ylab="prob admit" )
+# lines( 0:1 , z$mu )
+# shade( z$mu.ci , 0:1 )
+# shade( z$obs.ci , 0:1 )

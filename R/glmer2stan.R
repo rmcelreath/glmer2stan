@@ -1,4 +1,5 @@
 # to do:
+# (*) families: use built-in families and links (the closures) instead of strings
 # (*) turbo option, to apply matt trick and use matrix operations for glm (design matrix)...reduces readability of model, but potentially large speed benefits
 # (*) eventually make default chains=4, but need to monitor Rhat
 # (*) make "conjugate" priors for traditional inv_wishart/inv_gamma...these priors suck, but people like them

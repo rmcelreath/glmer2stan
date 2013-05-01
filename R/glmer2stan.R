@@ -965,8 +965,9 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                 passinit[[i]] <- init_list
             }
         }
-        if ( calcDIC==FALSE ) pars_list <- NA
-        if ( calcDIC==TRUE ) pars_list <- pars_list[ 2:length(pars_list) ]
+        
+        pars_list <- pars_list[ 2:length(pars_list) ]
+        
         if ( verbose==TRUE ) {
             message( "Starting Stan model" )
             flush.console()

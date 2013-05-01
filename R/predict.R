@@ -2,7 +2,6 @@
 # functions to compute posterior predictions from glmer2stan fit models
 
 # to do
-# (*) coerce cluster variables to integer
 # (*) replace missing variables with means from data used in fitting
 # (*) when data missing entirely, use data used in fitting
 # (*) structure result as data frame?
@@ -17,19 +16,13 @@ stanpredict <- function( stanfit , data , vary_prefix="vary_" , fixed_prefix="be
         astring
     }
     
-    PCI <- function (samples, prob = 0.95) 
-    {
-        a <- (1 - prob)/2
-        quantile(samples, probs = c(a, 1 - a))
-    }
-    
     logistic <- function (x) 
     {
         p <- 1/(1 + exp(-x))
         p <- ifelse(x == Inf, 1, p)
         p
     }
-
+    
     # check params
     
     if ( missing(data) ) {
@@ -57,11 +50,24 @@ stanpredict <- function( stanfit , data , vary_prefix="vary_" , fixed_prefix="be
     family <- attr( stanfit , "formulas" )$family
     formula <- attr( stanfit , "formulas" )$formula
     
+    # check cluster vars are class integer
+    for ( i in 1:length(cluster_vars) ) {
+        varname <- names(cluster_vars)[i]
+        if ( !is.null( data[[ varname ]] ) ) {
+            data[[ varname ]] <- as.integer( data[[ varname ]] )
+        } else {
+            # no cluster values in data!
+            # so just substitute with 0 => not use random effects in prediction
+            data[[ varname ]] <- as.integer(0)
+        }
+    }
+    
     # check for missing outcome values in data
     # don't need outcomes, but design.matrix wants them for its input
     # so can just add placeholders
     for ( f in 1:num_formulas ) {
-        data[[ fp[[f]]$yname ]] <- 0
+        if ( is.null(data[[ fp[[f]]$yname ]]) ) 
+            data[[ fp[[f]]$yname ]] <- 0
         # for binomial, also need failure count
         # so stop and warn user
         if ( family[[f]]=="binomial" ) {
@@ -204,6 +210,20 @@ stanpredict <- function( stanfit , data , vary_prefix="vary_" , fixed_prefix="be
             outsim <- sapply( 1:nrow(glm2) , function(i) quantile( 
                 rbinom( nsims , prob=glm2[i,] , size=data_list[[bintotname]][i] )/data_list[[bintotname]][i] , probs=probs ) )
         }
+        if ( family[[f]] == "ordered" ) {
+            # NYI
+        }
+        if ( family[[f]] == "gamma" ) {
+            glm2 <- exp( glm2 ) # log link
+            parname <- paste( "theta" , var_suffix[f] , sep="" )
+            outsim <- sapply( 1:nrow(glm2) , function(i) quantile( 
+                rgamma2( nsims , glm2[i,] , post[[parname]] ) , probs=probs ) )
+        }
+        if ( family[[f]] == "poisson" ) {
+            glm2 <- exp( glm2 ) # log link
+            outsim <- sapply( 1:nrow(glm2) , function(i) quantile( 
+                rpois( nsims , glm2[i,] ) , probs=probs ) )
+        }
         
         # store results
         # compute summary stats
@@ -224,8 +244,6 @@ stanpredict <- function( stanfit , data , vary_prefix="vary_" , fixed_prefix="be
 # test
 
 # data(UCBadmit)
-# UCBadmit$dept <- as.integer(UCBadmit$dept)
-# UCBadmit$male <- ifelse( UCBadmit$applicant.gender=="male" , 1 , 0 )
 # m <- glmer2stan( cbind(admit,reject) ~ (1|dept) + male , data=UCBadmit , family="binomial" )
 
 # z <- stanpredict( m , data=UCBadmit )[[1]]
@@ -235,8 +253,12 @@ stanpredict <- function( stanfit , data , vary_prefix="vary_" , fixed_prefix="be
 # shade( z$mu.ci , 1:nrow(UCBadmit) )
 # shade( z$obs.ci , 1:nrow(UCBadmit) )
 
-# z <- stanpredict( m , data=list( reject=100 , dept=as.integer(3) , male=c(0,1) ) )[[1]]
+# z <- stanpredict( m , data=list( reject=100 , male=c(0,1) , dept=0 ) )[[1]]
 # plot( 0:1 , type="n" , xlim=c(0,1) , ylim=c(0,1) , xlab="female/male" , ylab="prob admit" )
 # lines( 0:1 , z$mu )
 # shade( z$mu.ci , 0:1 )
 # shade( z$obs.ci , 0:1 )
+
+# data(chimpanzees)
+# m2 <- glmer2stan( pulled.left ~ (1+prosoc.left|actor) + prosoc.left * condition - condition , data=chimpanzees , family="binomial" , varpriors="weak" , sample=TRUE )
+# z <- stanpredict( m2 , data=chimpanzees )[[1]]

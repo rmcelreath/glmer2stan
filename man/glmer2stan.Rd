@@ -3,12 +3,12 @@
 %- Also NEED an '\alias' for EACH other topic documented here.
 \title{Define Stan model using glmer notation}
 \description{
-  Using standard formula notation from \code{glmer} (\code{lme4}), defines a Stan model (\code{rstan}) and optionally samples from the posterior. Can optionally compute DIC. Supports model families: "gaussian", "binomial", "poisson", "ordered", "gamma", and two zero-inflated families, "zigamma" and "zipoisson". A number of custom mixture and multiple-outcome models can be specified by using lists of formulas and family names.
+  Using standard formula notation from \code{glmer} (\code{lme4}), defines a Stan model (\code{rstan}) and optionally samples from the posterior. Can optionally compute DIC or WAIC. Supports model families: "gaussian", "binomial", "poisson", "ordered", "gamma", and two zero-inflated families, "zigamma" and "zipoisson". A number of custom mixture and multiple-outcome models can be specified by using lists of formulas and family names.
 }
 \usage{
 glmer2stan( formula , data , family="gaussian" , varpriors="flat" , 
     sample=TRUE , warmup=5000 , iter=10000 , chains=1 , initmethod="zero" , 
-    extract=FALSE , calcDIC=FALSE , verbose=TRUE , 
+    extract=FALSE , calcDIC=TRUE , calcWAIC=FALSE , verbose=TRUE , 
     fixed_prefix="beta_" , vary_prefix="vary_" , ... )
 }
 %- maybe also 'usage' for other objects documented here.
@@ -24,6 +24,7 @@ glmer2stan( formula , data , family="gaussian" , varpriors="flat" ,
   \item{initmethod}{Method of determining initial values for sampling. Options are "zero" for all zeros on fixed effects (except Intercepts) and ones on standard deviations, "random" for random inits within parameter support, and "lme4" for estimates from a \code{glmer} fit.}
   \item{extract}{If TRUE, extracts samples (minus warmup) from resulting \code{rstan} fit and returns only the samples, not the entire \code{stanfit} object}
   \item{calcDIC}{If TRUE, computes the Deviance Information Criterion, DIC, after sampling}
+  \item{calcWAIC}{If TRUE, computes the Widely Applicable Information Criterion, WAIC, after sampling}
   \item{verbose}{If TRUE, displays various progress messages}
   \item{fixed_prefix}{Text to prepend to fixed effect parameter names. Default is 'beta_'.}
   \item{vary_prefix}{Text to prepend to varying effect parameter names. Default is 'vary_'.}
@@ -40,7 +41,13 @@ glmer2stan( formula , data , family="gaussian" , varpriors="flat" ,
   
   Note that \code{glmer2stan} does not yet correctly handle models that pair varying slopes with non-varying intercepts. For example, \code{y ~ (0+x|id) + x} indicates a model with varying slopes on \code{x}, but no varying intercepts. This is a legitimate (although unusual) model, and \code{glmer} will estimate it, but \code{glmer2stan} will not define it properly. A later release may fix this issue. For now, manually editing the model code is necessary.
   
-  When \code{calcDIC=TRUE}, additional code is added to the model that computes the deviance at each sample. These can later be used to simplify computing DIC. When sampling is also done through \code{glmer2stan}, DIC will be computed and displayed when the chain completes. DIC is defined as \code{2*Dbar - Dhat}, where \code{Dbar} is the average deviance and \code{Dhat} is the deviance at the average values of all parameters. All samples after warmup are used to compute these averages.
+  When \code{calcDIC=TRUE}, additional code is added to the model that computes the deviance at each sample. These can later be used to simplify computing DIC. When sampling is also done through \code{glmer2stan}, DIC will be computed and displayed when the chain completes. DIC is defined as \code{2*Dbar - Dhat}, where \code{Dbar} is the average deviance and \code{Dhat} is the deviance at the average values of all parameters. All samples after warmup are used to compute these averages. See Section 8.6 of Lunn et al 2013 for details.
+  
+  When \code{calcWAIC=TRUE}, the Stan model code is not altered, but \code{glmer2stan} will compute WAIC (Widely Applicable Information Criterion), when sampling completes. WAIC requires computing the likelihood for each data point, for each sample from the posterior. The formula used for the penalty term is:
+  
+  \deqn{p = \Sum_i \var_s(\log L(y_i|\theta_s))}
+  
+  where the summation is over data points \code{i} and the variance is over posterior samples \code{s}. See Watanabe 2010. See also Gelman, Hwang & Vehtari 2013 for alternative formulas.
   
   When choosing \code{family='ordered'}, the parameter vector \code{cutpoints} will contain the ordered intercepts. The outcome variable must be integer valued with minimum 1.
   
@@ -56,7 +63,13 @@ glmer2stan( formula , data , family="gaussian" , varpriors="flat" ,
   
   All top-level (fixed effect) regression parameters are assigned default \code{normal(0,100)} priors. To change these, set \code{sample=FALSE} and edit the model code directly.
 }
-\references{}
+\references{
+Gelman, A., J. Hwang, and A. Vehtari. 2013. Understanding predictive information criteria for Bayesian models.
+
+Lunn, D., C. Jackson, N. Best, A. Thomas, and D. Spiegelhalter. 2013. The BUGS Book. CRC Press.
+
+Watanabe, S. 2010. Asymptotic equivalence of Bayes cross validation and Widely Applicable Information Criterion in singular learning theory. Journal of Machine Learning Research 11:3571-3594.
+}
 \author{Richard McElreath}
 \seealso{\code{\link{glmer}},\code{\link{stan}}}
 \examples{

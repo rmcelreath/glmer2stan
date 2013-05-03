@@ -23,21 +23,6 @@ stanpredict <- function( stanfit , data , vary_prefix="vary_" , fixed_prefix="be
         p
     }
     
-    rgamma2 <- function (n, mu, scale) 
-    {
-        rgamma(n, shape = mu/scale, scale = scale)
-    }
-    
-    rordlogit <- function (n, a, phi = 0) 
-    {
-        a <- c(as.numeric(a), Inf)
-        k <- 1:length(a)
-        p <- dordlogit(k, a = a, phi = phi, log = FALSE)
-        y <- sample(k, size = n, replace = TRUE, prob = p)
-        y
-    }
-
-    
     # check params
     
     if ( missing(data) ) {
@@ -226,22 +211,18 @@ stanpredict <- function( stanfit , data , vary_prefix="vary_" , fixed_prefix="be
                 rbinom( nsims , prob=glm2[i,] , size=data_list[[bintotname]][i] )/data_list[[bintotname]][i] , probs=probs ) )
         }
         if ( family[[f]] == "ordered" ) {
-            message( "Outcome simulations for family 'ordered' not yet implemented" )
-            # NYI - rordlogit doesn't vectorize over posterior cutpoints
-            cutsname <- paste( "cutpoints" , var_suffix[f] , sep="" )
-            outsim <- sapply( 1:nrow(glm2) , function(i) quantile( 
-                rordlogit( nsims , phi=glm2[i,] , a=post[[cutsname]] ) , probs=probs ) )
+            # NYI
         }
         if ( family[[f]] == "gamma" ) {
             glm2 <- exp( glm2 ) # log link
             parname <- paste( "theta" , var_suffix[f] , sep="" )
             outsim <- sapply( 1:nrow(glm2) , function(i) quantile( 
-                rgamma2( nsims , mu=glm2[i,] , scale=1/post[[parname]] ) , probs=probs ) )
+                rgamma2( nsims , glm2[i,] , post[[parname]] ) , probs=probs ) )
         }
         if ( family[[f]] == "poisson" ) {
             glm2 <- exp( glm2 ) # log link
             outsim <- sapply( 1:nrow(glm2) , function(i) quantile( 
-                rpois( nsims , lambda=glm2[i,] ) , probs=probs ) )
+                rpois( nsims , glm2[i,] ) , probs=probs ) )
         }
         
         # store results

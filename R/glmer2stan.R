@@ -109,7 +109,7 @@ parse_formula <- function( formula , data ) {
     list( y=outcome , yname=outcome_name , fixef=fixef , ranef=ranef , dat=as.data.frame(mdat) )
 }
 
-glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , sample=TRUE , warmup=5000 , iter=10000 , chains=1 , initmethod="zero" , extract=FALSE , calcDIC=TRUE , calcWAIC=FALSE , verbose=TRUE , fixed_prefix="beta_" , vary_prefix="vary_" , ... ) {
+glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , sample=TRUE , warmup=5000 , iter=10000 , chains=1 , initmethod="zero" , extract=FALSE , calcDIC=FALSE , verbose=TRUE , fixed_prefix="beta_" , vary_prefix="vary_" , ... ) {
     
     # hard-coded options
     indent <- "    " # 4 spaces
@@ -993,8 +993,11 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     
     ################################
     # calculate DIC, after fitting
-    if ( ( calcDIC==TRUE | calcWAIC==TRUE ) & sample==TRUE ) {
-        
+    if ( calcDIC==TRUE & sample==TRUE ) {
+        if ( verbose==TRUE ) {
+            message( "Computing DIC" )
+            flush.console()
+        }
         gc()
         
         post <- extract( result , permuted=TRUE ) # extract as list of arrays
@@ -1009,173 +1012,11 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
         }
         gc()
         
-        if ( calcDIC ) {
-            Dbar <- postbar$dev
-            Dhat <- 0
-        }
-        
-        if ( verbose==TRUE ) {
-            if ( calcWAIC ) {
-                message( "Computing WAIC" )
-                message( "Warning: WAIC only works for single-formula models right now." )
-            }
-            flush.console()
-        }
-        
-        # for each formula, calcWAIC -- not sure how to handle data splitting across formulas
-        for ( f in 1:num_formulas ) {
-        
-            if ( calcWAIC==TRUE ) {
-            
-                pd <- 0
-                lppd <- 0
-            
-                N_all <- nrow(fp[[f]]$dat)
-                vary <- rep( 0 , N_all )
-                
-                update_inc <- floor( N_all / 10 )
-                
-                for ( i in 1:N_all ) {
-                
-                    # progress output every 100 cases
-                    if ( floor(i/update_inc)==i/update_inc ) {
-                        cat( "\r" )
-                        cat( paste( "Progress: " , i , " / " , N_all , sep="" ) )
-                    }
-                
-                    # compute varying component of GLM
-                    N_samples <- length(post[[1]])
-                    vary <- rep( 0 , N_samples ) # number of samples
-                    if ( length( fp[[f]]$ranef ) > 0 ) {
-                        for ( r in 1:length( fp[[f]]$ranef ) ) {
-                            cluster_name <- undot( names(fp[[f]]$ranef)[r] )
-                            parname <- paste( vary_prefix , cluster_name , sep="" )
-                            nterms <- length( fp[[f]]$ranef[[r]] )
-                            total_terms <- sum( cluster_vars[[ cluster_name ]] ) # across all formulas
-                            fnames <- fp[[f]]$ranef[[r]]
-                            for ( j in 1:nterms ) {
-                                jstart <- 0
-                                if ( f > 1 ) {
-                                    jstart <- sum( cluster_vars[[ cluster_name ]][ 1:(f-1) ] )
-                                }
-                                dox <- 1
-                                if ( undot(fnames[j]) != "Intercept" ) {
-                                    xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
-                                    dox <- data_list[[ xname ]][i]
-                                }
-                                cname <- paste( cluster_name , var_suffix[f] , sep="" )
-                                if ( total_terms > 1 ) {
-                                    vary <- vary + post[[ parname ]][ , data_list[[cname]][i] , j+jstart ] * dox
-                                } else {
-                                    vary <- vary + post[[ parname ]][ , data_list[[cname]][i] ] * dox
-                                }
-                            } #j
-                        } #i
-                    }
-                
-                    # compute fixed component of GLM
-                    nterms <- length( fp[[f]]$fixef )
-                    fnames <- fp[[f]]$fixef
-                    glm <- rep( 0 , N_samples )
-                    for ( j in 1:nterms ) {
-                        prefix <- fixed_prefix
-                        if ( undot(fnames[j])=="Intercept" ) {
-                            if ( family[[f]]!="ordered" ) {
-                                parname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
-                                glm <- glm + post[[ parname ]]
-                            }
-                        } else {
-                            parname <- paste( prefix , undot(fnames[j]) , var_suffix[f] , sep="" )
-                            xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
-                            dox <- data_list[[ xname ]][i]
-                            glm <- glm + post[[ parname ]] * dox
-                        }
-                    }
-                    
-                    # likelihoods for case i
-                    outvar <- paste( undot( fp[[f]]$yname ) , var_suffix[f] , sep="" )
-            
-                    if ( family[[f]]=="gaussian" ) {
-                        sigmavar <- paste( "sigma" , var_suffix[f] , sep="" )
-                        l <- dnorm(
-                            x = data_list[[ outvar ]][i] ,
-                            mean = glm + vary ,
-                            sd = post[[ sigmavar ]] ,
-                            log = FALSE
-                        )
-                        ll <- log(l)
-                    }
-                    if ( family[[f]]=="binomial" ) {
-                        bintotvar <- paste( "bin_total" , var_suffix[f] , sep="" )
-                        l <- dbinom(
-                            x = data_list[[ outvar ]][i] ,
-                            prob = logistic( glm + vary ) ,
-                            size = data_list[[ bintotvar ]][i] ,
-                            log = FALSE
-                        )
-                        ll <- log(l)
-                    }
-                    if ( family[[f]]=="poisson" ) {
-                        l <- dpois(
-                            x = data_list[[ outvar ]][i] ,
-                            lambda = exp( glm + vary ) ,
-                            log = FALSE
-                        )
-                        ll <- log(l)
-                    }
-                    if ( family[[f]]=="ordered" ) {
-                        cutsname <- paste( "cutpoints" , var_suffix[f] , sep="" )
-                        l <- sapply( 1:N_samples , function(s) 
-                                dordlogit(
-                                    x = data_list[[ outvar ]][i] ,
-                                    phi = glm[s] + vary[s] ,
-                                    a = post[[ cutsname ]][s,] ,
-                                    log = FALSE
-                                )
-                            )
-                        ll <- log(l)
-                    }
-                    if ( family[[f]]=="gamma" ) {
-                        thetavar <- paste( "theta" , var_suffix[f] , sep="" )
-                        l <- dgamma2(
-                            x = data_list[[ outvar ]][i] ,
-                            mu = exp( glm + vary ) ,
-                            scale = 1/postbar[[ thetavar ]] ,
-                            log = FALSE
-                        )
-                        ll <- log(l)
-                    }
-                    
-                    # compute variance in log-lik for case i
-                    pd <- pd + var(ll)
-                    
-                    # compute log of average likelihood for case i
-                    lppd <- lppd + log(mean(l))
-                
-                } #i
-                
-                cat( "\r                             " ) # clear progress output
-                cat( paste( "\rlppd =" , round(lppd,2) ) )
-                cat( paste( "\npDWAIC =" , round(pd,2) ) )
-                cat( paste( "\nWAIC =" , round( -2*(lppd-pd) ,2) ) )
-                cat( "\n" )
-            
-            } # calcWAIC
-            
-        } #f
-        
-        if ( verbose==TRUE ) {
-            if ( calcDIC ) {
-                if ( calcWAIC ) cat("\n") # spacing
-                message( "Computing DIC" )
-            }
-            flush.console()
-        }
+        Dbar <- postbar$dev
+        Dhat <- 0
         
         # for each formula, accumulate deviance at expected values of parameters
         for ( f in 1:num_formulas ) {
-        
-            if ( calcDIC ) {
         
             # compute varying component of GLM
             N_all <- nrow(fp[[f]]$dat)
@@ -1273,8 +1114,6 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                 ) )
             }
             
-            } # calcDIC
-            
         } #f
         
         pD <- Dbar - Dhat
@@ -1298,20 +1137,10 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     }
     
     if ( calcDIC==TRUE & sample==TRUE ) {
-        attr(result,"DIC") <- list(
-                DIC=DIC,
-                pD=pD,
-                Dhat=Dhat,
-                Dbar=Dbar
-            )
-    }
-    
-    if ( calcWAIC==TRUE & sample==TRUE ) {
-        attr(result,"WAIC") <- list(
-            pD = pd ,
-            lppd = lppd ,
-            WAIC = -2*(lppd-pd)
-        )
+        attr(result,"DIC") <- DIC
+        attr(result,"pD") <- pD
+        attr(result,"Dhat") <- Dhat
+        attr(result,"Dbar") <- Dbar
     }
     
     # add model structure attributes
@@ -1473,18 +1302,9 @@ stanmer <- function( fit , digits=2 , probs=c(0.025,0.975) , fixed_prefix="beta_
             
     }
     
-    # DIC
     if ( !is.null( attr(fit,"DIC") ) ) {
-        w <- attr(fit,"DIC")
-        cat( paste( "\nDIC: " , round(w$DIC,0) , "   pDIC: " , round(w$pD,1) , "   Deviance: " , round(w$Dhat,1) , "\n" , sep="" ) )
+        cat( paste( "\nDeviance: " , round(attr(fit,"Dhat"),1) , "   DIC: " , round(attr(fit,"DIC"),0) , "\n" , sep="" ) )
     }
-    
-    # WAIC
-    if ( !is.null( attr(fit,"WAIC") ) ) {
-        w <- attr(fit,"WAIC")
-        cat( paste( "\nWAIC: " , round(w$WAIC,0) , "   pWAIC: " , round(w$pD,1) , "   -2*lppd: " , round(-2*w$lppd,1) , "\n" , sep="" ) )
-    }
-    
     # return summary stats
     invisible(list( means=post.mu , se=post.se ))
 }
@@ -1497,10 +1317,6 @@ stanDIC <- function( fit ) {
     attr( fit , "DIC" )
 }
 
-stanWAIC <- function( fit ) {
-    attr( fit , "WAIC" )
-}
-
 gitrstan <- function() {
     message( "Journey to mc-stan.org for a proper introduction to rstan." )
     message( "Attempting to install dependencies..." )
@@ -1508,7 +1324,7 @@ gitrstan <- function() {
     install.packages('Rcpp')
     install.packages('RcppEigen')
     message( "Removing previous rstan installs (if any)..." )
-    try( remove.packages('rstan') )
+    remove.packages('rstan')
     message( "Now trying to download and compile rstan..." )
     options(repos = c(getOption("repos"), rstan = "http://wiki.stan.googlecode.com/git/R"))
     install.packages('rstan', type = 'source')

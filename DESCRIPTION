@@ -1,10 +1,10 @@
 Package: glmer2stan
 Type: Package
 Title: Rstan models defined by glmer formulas
-Version: 0.992
-Date: 2013-05-02
+Version: 0.991
+Date: 2013-04-23
 Author: Richard McElreath
 Maintainer: Richard McElreath <mcelreath@ucdavis.edu>
 Recommends: lme4
 Description: Translates a glmer formula to corresponding Stan model code
-License: GPLv3
+License: GPL v3

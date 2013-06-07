@@ -1,5 +1,5 @@
 \name{glmer2stan}
-\alias{glmer2stan}
+\alias{glmer2stan,lm2stan,glm2stan,lmer2stan}
 %- Also NEED an '\alias' for EACH other topic documented here.
 \title{Define Stan model using glmer notation}
 \description{
@@ -10,6 +10,10 @@ glmer2stan( formula , data , family="gaussian" , varpriors="flat" ,
     sample=TRUE , warmup=5000 , iter=10000 , chains=1 , initmethod="zero" , 
     extract=FALSE , calcDIC=TRUE , calcWAIC=FALSE , verbose=TRUE , 
     fixed_prefix="beta_" , vary_prefix="vary_" , ... )
+    
+lm2stan( formula , data , ... )
+glm2stan( formula , data , family , ... )
+lmer2stan ( formula , data , ... )
 }
 %- maybe also 'usage' for other objects documented here.
 \arguments{
@@ -28,10 +32,12 @@ glmer2stan( formula , data , family="gaussian" , varpriors="flat" ,
   \item{verbose}{If TRUE, displays various progress messages}
   \item{fixed_prefix}{Text to prepend to fixed effect parameter names. Default is 'beta_'.}
   \item{vary_prefix}{Text to prepend to varying effect parameter names. Default is 'vary_'.}
-  \item{...}{additional parameters to pass to \code{\link{stan}}}
+  \item{...}{additional parameters to pass to \code{glmer2stan} and \code{\link{stan}}}
 }
 \details{
-  This command uses the varying effects and fixed effects structures of a \code{\link{glmer}} model formula to define the corresponding model in \code{\link{rstan}}. There are two modes. 
+  These commands use the varying effects and fixed effects structures of a \code{\link{lmer}} or \code{\link{glmer}} model formula to define the corresponding model in \code{\link{rstan}}. The functions \code{lm2stan}, \code{glm2stan}, and \code{lmer2stan} just provide simplified aliases for \code{glmer2stan}. All processing is done by \code{glmer2stan}.
+  
+  There are two modes. 
   
   First, when option \code{sample=FALSE}, the command will define the model code and the \code{data} and \code{init} lists for \code{\link{stan}}, returning them in a list with named slots \code{model}, \code{data}, and \code{init}. These objects can later be passed to \code{\link{stan}} to sample from the model. You can use \code{show} to display the model code in a readable format.
   
@@ -47,7 +53,7 @@ glmer2stan( formula , data , family="gaussian" , varpriors="flat" ,
   
   \deqn{p = \Sum_i \var_s(\log L(y_i|\theta_s))}
   
-  where the summation is over data points \code{i} and the variance is over posterior samples \code{s}. See Watanabe 2010. See also Gelman, Hwang & Vehtari 2013 for alternative formulas.
+  where the summation is over data points \code{i} and the variance is over posterior samples \code{s}. See Watanabe 2010. See also Gelman, Hwang & Vehtari 2013 for alternative formulas. Note that binomial family models should be constructed in logistic regression form, with 0/1 outcomes, for properly computing WAIC. Currently, WAIC only works for single formula models. Zero-inflated and multiple-outcome models require some additional choices to be made, in order to define WAIC, since WAIC requires partitioning the data into 'points'. In the future, some default decisions for such models may be incorporated. In the meantime, \code{glmer2stan} merely warns the user.
   
   When choosing \code{family='ordered'}, the parameter vector \code{cutpoints} will contain the ordered intercepts. The outcome variable must be integer valued with minimum 1.
   

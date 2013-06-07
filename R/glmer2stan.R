@@ -1,15 +1,18 @@
 # to do:
+# (*) allow WAIC calculated across groups rather than cases (like leave-one-group-out CV). in case of multiple grouping variables, how to specify choice?
+# (*) warn about WAIC for aggregated binomial models -OR- automatically decompose aggregate counts into bernoulli trials, for WAIC calculation...otherwise it's like leave-one-aggregate out cross validation
+# (*) start saving prefix strings in fit object as attr, so can extract in helper functions like stanmer, varef, stanpredict
 # (*) families: use built-in families and links (the closures) instead of strings
 # (*) turbo option, to apply matt trick and use matrix operations for glm (design matrix)...reduces readability of model, but potentially large speed benefits
 # (*) eventually make default chains=4, but need to monitor Rhat
 # (*) make "conjugate" priors for traditional inv_wishart/inv_gamma...these priors suck, but people like them
+# (*) allow arbitrary var-cov priors, via a list? e.g. varpriors=c("uniform(0,10)","lkj_corr(1.0)") for uniform priors on standard deviations and uniform correlation matrix.
 # (*) check ordered response to ensure starts at 1
 # (*) allow passing specific init values for specific named parameters - can just pass a named list and then merge it with the init list?
 # (*) allow passing fit lme4 object
 # (*) allow passing list produced when sample=FALSE 
 # (1) add checks for variable types for zigamma...ensure zero outcome is integer
 # (2) add checks for cluster variables to make into integer type
-# (5) make DIC computation entirely post-sampling? would need to save parsed formulas.
 
 parse_formula <- function( formula , data ) {
     ## take a formula and parse into fixed effect and varying effect lists
@@ -109,6 +112,7 @@ parse_formula <- function( formula , data ) {
     list( y=outcome , yname=outcome_name , fixef=fixef , ranef=ranef , dat=as.data.frame(mdat) )
 }
 
+# the main event
 glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , sample=TRUE , warmup=5000 , iter=10000 , chains=1 , initmethod="zero" , extract=FALSE , calcDIC=TRUE , calcWAIC=FALSE , verbose=TRUE , fixed_prefix="beta_" , vary_prefix="vary_" , ... ) {
     
     # hard-coded options
@@ -120,6 +124,11 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     names(vectorized) <- c( "normal" , "binomial" , "poisson" , "gamma" , "ordered" )
     
     # private functions
+    log_sum_exp <- function( x ) {
+        xmax <- max(x)
+        xsum <- sum( exp( x - xmax ) )
+        xmax + log(xsum)
+    }
     class2type <- function( col ) {
         classes <- c("integer","numeric")
         types <- c("int","real")
@@ -163,6 +172,11 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
             if ( name=="Intercept" ) {
                 if ( !drop_intercept ) {
                     aterm <- paste( "Intercept" , suffix , sep="" )
+                    fterms <- c( fterms , aterm )
+                } else {
+                    # for ordered models, need to account for model with no predictors
+                    # since ordered models have no 'Intercept', will get an empty result otherwise
+                    aterm <- paste( "0" , sep="" )
                     fterms <- c( fterms , aterm )
                 }
             } else {
@@ -992,7 +1006,7 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     }
     
     ################################
-    # calculate DIC, after fitting
+    # calculate DIC/WAIC, after fitting
     if ( ( calcDIC==TRUE | calcWAIC==TRUE ) & sample==TRUE ) {
         
         gc()
@@ -1022,20 +1036,29 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
             flush.console()
         }
         
+        #### start of WAIC calculations ####
+        
         # for each formula, calcWAIC -- not sure how to handle data splitting across formulas
         for ( f in 1:num_formulas ) {
         
             if ( calcWAIC==TRUE ) {
             
+                # check for aggregated binomial model and warn
+                if ( family[[f]]=="binomial" ) {
+                    bintotvar <- paste( "bin_total" , var_suffix[f] , sep="" )
+                    if ( any( data_list[[ bintotvar ]] > 1 ) ) {
+                        message( "Warning: WAIC calculation not correct for aggregated binomial models. Recode data to logistic regression form (0/1 outcomes) instead." )
+                    }
+                }
+            
                 pd <- 0
                 lppd <- 0
-            
+                
                 N_all <- nrow(fp[[f]]$dat)
-                vary <- rep( 0 , N_all )
                 
                 update_inc <- floor( N_all / 10 )
                 
-                for ( i in 1:N_all ) {
+                for ( i in 1:N_all ) { # loop over cases
                 
                     # progress output every 100 cases
                     if ( floor(i/update_inc)==i/update_inc ) {
@@ -1070,7 +1093,7 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
                                     vary <- vary + post[[ parname ]][ , data_list[[cname]][i] ] * dox
                                 }
                             } #j
-                        } #i
+                        } #r
                     }
                 
                     # compute fixed component of GLM
@@ -1097,72 +1120,235 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
             
                     if ( family[[f]]=="gaussian" ) {
                         sigmavar <- paste( "sigma" , var_suffix[f] , sep="" )
-                        l <- dnorm(
+                        ll <- dnorm(
                             x = data_list[[ outvar ]][i] ,
                             mean = glm + vary ,
                             sd = post[[ sigmavar ]] ,
-                            log = FALSE
+                            log = TRUE
                         )
-                        ll <- log(l)
                     }
                     if ( family[[f]]=="binomial" ) {
                         bintotvar <- paste( "bin_total" , var_suffix[f] , sep="" )
-                        l <- dbinom(
+                        ll <- dbinom(
                             x = data_list[[ outvar ]][i] ,
                             prob = logistic( glm + vary ) ,
                             size = data_list[[ bintotvar ]][i] ,
-                            log = FALSE
+                            log = TRUE
                         )
-                        ll <- log(l)
                     }
                     if ( family[[f]]=="poisson" ) {
-                        l <- dpois(
+                        ll <- dpois(
                             x = data_list[[ outvar ]][i] ,
                             lambda = exp( glm + vary ) ,
-                            log = FALSE
+                            log = TRUE
                         )
-                        ll <- log(l)
                     }
                     if ( family[[f]]=="ordered" ) {
                         cutsname <- paste( "cutpoints" , var_suffix[f] , sep="" )
-                        l <- sapply( 1:N_samples , function(s) 
+                        ll <- sapply( 1:N_samples , function(s) 
                                 dordlogit(
                                     x = data_list[[ outvar ]][i] ,
                                     phi = glm[s] + vary[s] ,
                                     a = post[[ cutsname ]][s,] ,
-                                    log = FALSE
+                                    log = TRUE
                                 )
                             )
-                        ll <- log(l)
                     }
                     if ( family[[f]]=="gamma" ) {
                         thetavar <- paste( "theta" , var_suffix[f] , sep="" )
-                        l <- dgamma2(
+                        ll <- dgamma2(
                             x = data_list[[ outvar ]][i] ,
                             mu = exp( glm + vary ) ,
-                            scale = 1/postbar[[ thetavar ]] ,
-                            log = FALSE
+                            scale = 1/post[[ thetavar ]] ,
+                            log = TRUE
                         )
-                        ll <- log(l)
                     }
                     
                     # compute variance in log-lik for case i
                     pd <- pd + var(ll)
                     
                     # compute log of average likelihood for case i
-                    lppd <- lppd + log(mean(l))
+                    # same as log(mean(exp(ll))), but better numerically
+                    lppd <- lppd + log_sum_exp(ll) - log(length(ll))
                 
                 } #i
                 
                 cat( "\r                             " ) # clear progress output
                 cat( paste( "\rlppd =" , round(lppd,2) ) )
-                cat( paste( "\npDWAIC =" , round(pd,2) ) )
+                cat( paste( "\npWAIC =" , round(pd,2) ) )
                 cat( paste( "\nWAIC =" , round( -2*(lppd-pd) ,2) ) )
                 cat( "\n" )
+                
+                ########################################################################
+                #### now looping over clusters, like leave-one-cluster-out cross-validation
+                
+                if ( FALSE ) {    
+                if ( length(cluster_vars) > 0 ) {
+                for ( v in 1:length(cluster_vars) ) {
+                
+                    message( paste( "Computing WAIC for cluster '" , names(cluster_vars)[v] , "'" , sep="" ) )
+                    
+                    pd_j <- 0
+                    lppd_j <- 0
+                    
+                    N_groups <- cluster_size[[v]]
+                    
+                    update_inc <- floor( N_groups / 10 )
+                    
+                    for ( g in 1:N_groups ) { # loop over groups
+                        
+                        # progress output every 10%
+                        if ( floor(g/update_inc)==g/update_inc ) {
+                            cat( "\r" )
+                            cat( paste( "Progress: " , g , " / " , N_groups , sep="" ) )
+                        }
+                        
+                        # find indexes for cases in group g
+                        i_in_g <- which( data_list[[ names(cluster_vars)[v] ]] == g )
+                        N_in_g <- length(i_in_g)
+                        
+                        # compute varying component of GLM
+                        N_samples <- length(post[[1]])
+                        vary <- matrix( 0 , nrow=N_in_g , ncol=N_samples )
+                        
+                        if ( length( fp[[f]]$ranef ) > 0 ) {
+                            for ( r in 1:length( fp[[f]]$ranef ) ) {
+                                cluster_name <- undot( names(fp[[f]]$ranef)[r] )
+                                cname <- paste( cluster_name , var_suffix[f] , sep="" )
+                                parname <- paste( vary_prefix , cluster_name , sep="" )
+                                nterms <- length( fp[[f]]$ranef[[r]] )
+                                total_terms <- sum( cluster_vars[[ cluster_name ]] ) # across all formulas
+                                fnames <- fp[[f]]$ranef[[r]]
+                                for ( j in 1:nterms ) {
+                                    jstart <- 0
+                                    if ( f > 1 ) {
+                                        jstart <- sum( cluster_vars[[ cluster_name ]][ 1:(f-1) ] )
+                                    }
+                                    dox <- rep( 1 , N_in_g )
+                                    if ( undot(fnames[j]) != "Intercept" ) {
+                                        xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
+                                        dox <- data_list[[ xname ]][i_in_g] # just cases in group g
+                                    }
+                                    if ( total_terms > 1 ) {
+                                        # loop over cases in group g
+                                        #vary <- vary + post[[ parname ]][ , data_list[[cname]][i_in_g] , j+jstart ] * dox
+                                        for ( i in 1:N_in_g ) {
+                                            vary[i,] <- vary[i,] + post[[ parname ]][ , g , j+jstart ] * dox[i]
+                                        }
+                                    } else {
+                                        # vary <- vary + post[[ parname ]][ , data_list[[cname]][i] ] * dox
+                                        for ( i in 1:N_in_g ) {
+                                            vary[i,] <- vary[i,] + post[[ parname ]][ , g ] * dox[i]
+                                        }
+                                    }
+                                } #j
+                            } #r
+                        }
+                    
+                        # compute fixed component of GLM
+                        glm <- matrix( 0 , nrow=N_in_g , ncol=N_samples )
+                        
+                        nterms <- length( fp[[f]]$fixef )
+                        fnames <- fp[[f]]$fixef
+                        
+                        for ( j in 1:nterms ) {
+                            prefix <- fixed_prefix
+                            if ( undot(fnames[j])=="Intercept" ) {
+                                if ( family[[f]]!="ordered" ) {
+                                    parname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
+                                    for ( i in 1:N_in_g ) 
+                                        glm[i,] <- glm[i,] + post[[ parname ]]
+                                }
+                            } else {
+                                parname <- paste( prefix , undot(fnames[j]) , var_suffix[f] , sep="" )
+                                xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
+                                for ( i in 1:N_in_g ) {
+                                    dox <- data_list[[ xname ]][ i_in_g[i] ]
+                                    glm[i,] <- glm[i,] + post[[ parname ]] * dox
+                                }
+                            }
+                        }
+                        
+                        # likelihoods for group g
+                        outvar <- paste( undot( fp[[f]]$yname ) , var_suffix[f] , sep="" )
+                        
+                        if ( family[[f]]=="gaussian" ) {
+                            sigmavar <- paste( "sigma" , var_suffix[f] , sep="" )
+                            ll <- sapply( 1:N_samples , function(s) 
+                                    sum( dnorm(
+                                        x = data_list[[ outvar ]][i_in_g] ,
+                                        mean = glm[,s] + vary[,s] ,
+                                        sd = post[[ sigmavar ]][s] ,
+                                        log = TRUE
+                                    ) ) )
+                        }
+                        if ( family[[f]]=="binomial" ) {
+                            bintotvar <- paste( "bin_total" , var_suffix[f] , sep="" )
+                            ll <- sapply( 1:N_samples , function(s)
+                                sum( dbinom(
+                                    x = data_list[[ outvar ]][i_in_g] ,
+                                    prob = logistic( glm[,s] + vary[,s] ) ,
+                                    size = data_list[[ bintotvar ]][i_in_g] ,
+                                    log = TRUE
+                                ) ) )
+                        }
+                        if ( family[[f]]=="poisson" ) {
+                            ll <- sapply( 1:N_samples , function(s)
+                                sum( dpois(
+                                    x = data_list[[ outvar ]][i_in_g] ,
+                                    lambda = exp( glm[,s] + vary[,s] ) ,
+                                    log = TRUE
+                                ) ) )
+                        }
+                        if ( family[[f]]=="ordered" ) {
+                            cutsname <- paste( "cutpoints" , var_suffix[f] , sep="" )
+                            # need to loop over elements of i_in_g
+                            ll <- sapply( 1:N_samples , function(s) 
+                                    dordlogit(
+                                        x = data_list[[ outvar ]][i_in_g] ,
+                                        phi = glm[,s] + vary[,s] ,
+                                        a = post[[ cutsname ]][s,] ,
+                                        log = TRUE
+                                    )
+                                )
+                        }
+                        if ( family[[f]]=="gamma" ) {
+                            thetavar <- paste( "theta" , var_suffix[f] , sep="" )
+                            ll <- sapply( 1:N_samples , function(s)
+                                sum( dgamma2(
+                                    x = data_list[[ outvar ]][i_in_g] ,
+                                    mu = exp( glm[,s] + vary[,s] ) ,
+                                    scale = 1/post[[ thetavar ]][s] ,
+                                    log = TRUE
+                                ) ) )
+                        }
+                        
+                        # compute variance in log-lik for group g
+                        pd_j <- pd_j + var(ll)
+                        
+                        # compute log of average likelihood for group g
+                        lppd_j <- lppd_j + log_sum_exp(ll) - log(length(ll))
+                    
+                    } #g
+                    
+                    cat( "\r                             " ) # clear progress output
+                    message( paste( "\rWAIC[" , names(cluster_vars)[v] , "]" , sep="" ) )
+                    cat( paste( "lppd =" , round(lppd_j,2) ) )
+                    cat( paste( "\npWAIC =" , round(pd_j,2) ) )
+                    cat( paste( "\nWAIC[" , names(cluster_vars)[v] , "] =" , round( -2*(lppd_j-pd_j) ,2) ) )
+                    cat( "\n" )
+                
+                } # v
+                } # length(cluster_vars) > 0
+                } # if FALSE -- cluster WAIC block
             
             } # calcWAIC
             
         } #f
+        
+        #### end of WAIC calculations ####
+        
+        #### start of DIC calculations ####
         
         if ( verbose==TRUE ) {
             if ( calcDIC ) {
@@ -1177,101 +1363,101 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
         
             if ( calcDIC ) {
         
-            # compute varying component of GLM
-            N_all <- nrow(fp[[f]]$dat)
-            vary <- rep( 0 , N_all )
-            if ( length( fp[[f]]$ranef ) > 0 ) {
-                for ( i in 1:length( fp[[f]]$ranef ) ) {
-                    cluster_name <- undot( names(fp[[f]]$ranef)[i] )
-                    parname <- paste( vary_prefix , cluster_name , sep="" )
-                    nterms <- length( fp[[f]]$ranef[[i]] )
-                    total_terms <- sum( cluster_vars[[ cluster_name ]] ) # across all formulas
-                    fnames <- fp[[f]]$ranef[[i]]
-                    for ( j in 1:nterms ) {
-                        jstart <- 0
-                        if ( f > 1 ) {
-                            jstart <- sum( cluster_vars[[ cluster_name ]][ 1:(f-1) ] )
-                        }
-                        dox <- 1
-                        if ( undot(fnames[j]) != "Intercept" ) {
-                            xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
-                            dox <- data_list[[ xname ]]
-                        }
-                        cname <- paste( cluster_name , var_suffix[f] , sep="" )
-                        if ( total_terms > 1 ) {
-                            vary <- vary + postbar[[ parname ]][ data_list[[cname]] , j+jstart ] * dox
-                        } else {
-                            vary <- vary + postbar[[ parname ]][ data_list[[cname]] ] * dox
-                        }
-                    } #j
-                } #i
-            }
-        
-            # compute fixed component of GLM
-            nterms <- length( fp[[f]]$fixef )
-            fnames <- fp[[f]]$fixef
-            glm <- rep( 0 , N_all )
-            for ( j in 1:nterms ) {
-                prefix <- fixed_prefix
-                if ( undot(fnames[j])=="Intercept" ) {
-                    if ( family[[f]]!="ordered" ) {
-                        parname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
-                        glm <- glm + postbar[[ parname ]]
-                    }
-                } else {
-                    parname <- paste( prefix , undot(fnames[j]) , var_suffix[f] , sep="" )
-                    xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
-                    dox <- data_list[[ xname ]]
-                    glm <- glm + postbar[[ parname ]] * dox
+                # compute varying component of GLM
+                N_all <- nrow(fp[[f]]$dat)
+                vary <- rep( 0 , N_all )
+                if ( length( fp[[f]]$ranef ) > 0 ) {
+                    for ( i in 1:length( fp[[f]]$ranef ) ) {
+                        cluster_name <- undot( names(fp[[f]]$ranef)[i] )
+                        parname <- paste( vary_prefix , cluster_name , sep="" )
+                        nterms <- length( fp[[f]]$ranef[[i]] )
+                        total_terms <- sum( cluster_vars[[ cluster_name ]] ) # across all formulas
+                        fnames <- fp[[f]]$ranef[[i]]
+                        for ( j in 1:nterms ) {
+                            jstart <- 0
+                            if ( f > 1 ) {
+                                jstart <- sum( cluster_vars[[ cluster_name ]][ 1:(f-1) ] )
+                            }
+                            dox <- 1
+                            if ( undot(fnames[j]) != "Intercept" ) {
+                                xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
+                                dox <- data_list[[ xname ]]
+                            }
+                            cname <- paste( cluster_name , var_suffix[f] , sep="" )
+                            if ( total_terms > 1 ) {
+                                vary <- vary + postbar[[ parname ]][ data_list[[cname]] , j+jstart ] * dox
+                            } else {
+                                vary <- vary + postbar[[ parname ]][ data_list[[cname]] ] * dox
+                            }
+                        } #j
+                    } #i
                 }
-            }
             
-            # now compute deviance (Dhat) at top level
-            
-            outvar <- paste( undot( fp[[f]]$yname ) , var_suffix[f] , sep="" )
-            
-            if ( family[[f]]=="gaussian" ) {
-                sigmavar <- paste( "sigma" , var_suffix[f] , sep="" )
-                Dhat <- Dhat + (-2) * sum( dnorm(
-                    x = data_list[[ outvar ]] ,
-                    mean = glm + vary ,
-                    sd = postbar[[ sigmavar ]] ,
-                    log = TRUE
-                ) )
-            }
-            if ( family[[f]]=="binomial" ) {
-                bintotvar <- paste( "bin_total" , var_suffix[f] , sep="" )
-                Dhat <- Dhat + (-2) * sum( dbinom(
-                    x = data_list[[ outvar ]] ,
-                    prob = logistic( glm + vary ) ,
-                    size = data_list[[ bintotvar ]] ,
-                    log = TRUE
-                ) )
-            }
-            if ( family[[f]]=="poisson" ) {
-                Dhat <- Dhat + (-2) * sum( dpois(
-                    x = data_list[[ outvar ]] ,
-                    lambda = exp( glm + vary ) ,
-                    log = TRUE
-                ) )
-            }
-            if ( family[[f]]=="ordered" ) {
-                Dhat <- Dhat + (-2) * sum( dordlogit(
-                    x = data_list[[ outvar ]] ,
-                    phi = glm + vary ,
-                    a = postbar[[ "cutpoints" ]] ,
-                    log = TRUE
-                ) )
-            }
-            if ( family[[f]]=="gamma" ) {
-                thetavar <- paste( "theta" , var_suffix[f] , sep="" )
-                Dhat <- Dhat + (-2) * sum( dgamma2(
-                    x = data_list[[ outvar ]] ,
-                    mu = exp( glm + vary ) ,
-                    scale = 1/postbar[[ thetavar ]] ,
-                    log = TRUE
-                ) )
-            }
+                # compute fixed component of GLM
+                nterms <- length( fp[[f]]$fixef )
+                fnames <- fp[[f]]$fixef
+                glm <- rep( 0 , N_all )
+                for ( j in 1:nterms ) {
+                    prefix <- fixed_prefix
+                    if ( undot(fnames[j])=="Intercept" ) {
+                        if ( family[[f]]!="ordered" ) {
+                            parname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
+                            glm <- glm + postbar[[ parname ]]
+                        }
+                    } else {
+                        parname <- paste( prefix , undot(fnames[j]) , var_suffix[f] , sep="" )
+                        xname <- paste( undot(fnames[j]) , var_suffix[f] , sep="" )
+                        dox <- data_list[[ xname ]]
+                        glm <- glm + postbar[[ parname ]] * dox
+                    }
+                }
+                
+                # now compute deviance (Dhat) at top level
+                
+                outvar <- paste( undot( fp[[f]]$yname ) , var_suffix[f] , sep="" )
+                
+                if ( family[[f]]=="gaussian" ) {
+                    sigmavar <- paste( "sigma" , var_suffix[f] , sep="" )
+                    Dhat <- Dhat + (-2) * sum( dnorm(
+                        x = data_list[[ outvar ]] ,
+                        mean = glm + vary ,
+                        sd = postbar[[ sigmavar ]] ,
+                        log = TRUE
+                    ) )
+                }
+                if ( family[[f]]=="binomial" ) {
+                    bintotvar <- paste( "bin_total" , var_suffix[f] , sep="" )
+                    Dhat <- Dhat + (-2) * sum( dbinom(
+                        x = data_list[[ outvar ]] ,
+                        prob = logistic( glm + vary ) ,
+                        size = data_list[[ bintotvar ]] ,
+                        log = TRUE
+                    ) )
+                }
+                if ( family[[f]]=="poisson" ) {
+                    Dhat <- Dhat + (-2) * sum( dpois(
+                        x = data_list[[ outvar ]] ,
+                        lambda = exp( glm + vary ) ,
+                        log = TRUE
+                    ) )
+                }
+                if ( family[[f]]=="ordered" ) {
+                    Dhat <- Dhat + (-2) * sum( dordlogit(
+                        x = data_list[[ outvar ]] ,
+                        phi = glm + vary ,
+                        a = postbar[[ "cutpoints" ]] ,
+                        log = TRUE
+                    ) )
+                }
+                if ( family[[f]]=="gamma" ) {
+                    thetavar <- paste( "theta" , var_suffix[f] , sep="" )
+                    Dhat <- Dhat + (-2) * sum( dgamma2(
+                        x = data_list[[ outvar ]] ,
+                        mu = exp( glm + vary ) ,
+                        scale = 1/postbar[[ thetavar ]] ,
+                        log = TRUE
+                    ) )
+                }
             
             } # calcDIC
             
@@ -1285,10 +1471,12 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
         #attr(result,"Dbar") <- Dbar
         cat( paste( "Expected deviance =" , round(Dbar,2) ) )
         cat( paste( "\nDeviance of expectation =" , round(Dhat,2) ) )
-        cat( paste( "\npD =" , round(pD,2) ) )
+        cat( paste( "\npDIC =" , round(pD,2) ) )
         cat( paste( "\nDIC =" , round(DIC,2) ) )
         cat( "\n" )
     }
+    
+    #### end of DIC calculations ####
     
     ##########################################
     # prep results
@@ -1361,6 +1549,20 @@ glmer2stan <- function( formula , data , family="gaussian" , varpriors="flat" , 
     result
 }
 
+# aliases to simpler model specifications
+lm2stan <- function( formula , data , ... ) {
+    glmer2stan( formula , data , family="gaussian" , ... )
+}
+
+glm2stan <- function( formula , data , family , ... ) {
+    glmer2stan( formula , data , family=family , ... )
+}
+
+lmer2stan <- function( formula , data , ... ) {
+    glmer2stan( formula , data , family="gaussian" , ... )
+}
+
+# pretty print estimates
 stanmer <- function( fit , digits=2 , probs=c(0.025,0.975) , fixed_prefix="beta_" , vary_prefix="vary_" ) {
     spot <- function(pattern,target) length( grep( pattern , target , fixed=TRUE ) )>0
     unprefix <- function(astring) {
@@ -1414,21 +1616,26 @@ stanmer <- function( fit , digits=2 , probs=c(0.025,0.975) , fixed_prefix="beta_
         
     }#i
     
-    fix <- data.frame( Expectation=as.numeric(post.mu[fixlist]) , StdDev=as.numeric(post.se[fixlist]) )
-    rownames(fix) <- sapply( fixlist , unprefix2 )
+    if ( length(fixlist)>0 ) {
     
-    if ( !is.null(probs) ) {
-        q <- matrix( 0 , nrow=nrow(fix) , ncol=length(probs) )
-        for ( k in 1:length(fixlist) ) {
-            q[k,] <- quantile( post[[ fixlist[k] ]] , probs )
+        fix <- data.frame( Expectation=as.numeric(post.mu[fixlist]) , StdDev=as.numeric(post.se[fixlist]) )
+        rownames(fix) <- sapply( fixlist , unprefix2 )
+        
+        if ( !is.null(probs) ) {
+            q <- matrix( 0 , nrow=nrow(fix) , ncol=length(probs) )
+            for ( k in 1:length(fixlist) ) {
+                q[k,] <- quantile( post[[ fixlist[k] ]] , probs )
+            }
+            colnames(q) <- paste( round(probs*100,1) , "%" , sep="" )
+            fix <- cbind( fix , q )
         }
-        colnames(q) <- paste( round(probs*100,1) , "%" , sep="" )
-        fix <- cbind( fix , q )
-    }
+        
+        cat( paste( "glmer2stan model: " , fit@stanmodel@model_name , "\n\n" , sep="" ) )
+        cat( "Level 1 estimates:\n" )
+        print( round( fix , digits ) )
     
-    cat( paste( "glmer2stan model: " , fit@stanmodel@model_name , "\n\n" , sep="" ) )
-    cat( "Level 1 estimates:\n" )
-    print( round( fix , digits ) )
+    } # fixlist
+    
     cat( "\nLevel 2 estimates:\n" )
     cat( "(Std.dev. and correlations)\n" )
     

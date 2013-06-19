@@ -11,8 +11,8 @@
 # (*) allow passing specific init values for specific named parameters - can just pass a named list and then merge it with the init list?
 # (*) allow passing fit lme4 object
 # (*) allow passing list produced when sample=FALSE 
-# (1) add checks for variable types for zigamma...ensure zero outcome is integer
-# (2) add checks for cluster variables to make into integer type
+# (-) add checks for variable types for zigamma...ensure zero outcome is integer
+# (-) add checks for cluster variables to make into integer type -- code is in place, but disabled for now in favor type and contiguity checks (inside parse_formula)
 
 parse_formula <- function( formula , data ) {
     ## take a formula and parse into fixed effect and varying effect lists
@@ -89,9 +89,24 @@ parse_formula <- function( formula , data ) {
         for ( i in 1:length(var) ) {
             name <- all.vars( var[[i]][[3]] )
             
-            # check that grouping vars are class integer
-            if ( class( data[[name]] )!="integer" ) {
-                stop( paste( "Grouping variables must be integer type. '" , name , "' is instead of type: " , class( data[[name]] ) , "." , sep="" ) )
+            if ( TRUE ) {
+                # check that grouping vars are class integer
+                if ( class( data[[name]] )!="integer" ) {
+                    stop( paste( "Grouping variables must be integer type. '" , name , "' is instead of type: " , class( data[[name]] ) , "." , sep="" ) )
+                }
+                # check that values are contiguous
+                if ( min(data[[name]]) != 1 ) 
+                    stop( paste( "Group variable '" , name , "' doesn't start at index 1." , sep="" ) )
+                ulist <- unique( data[[name]] )
+                diffs <- ulist[2:length(ulist)] - ulist[1:(length(ulist)-1)]
+                if ( any(diffs != 1) )
+                    stop( paste( "Group variable '" , name , "' is not contiguous." , sep="" ) )
+            } else {
+                # new code to coerce grouping vars to type integer
+                # first, save the labels by converting to character
+                #glabels <- as.character( data[[name]] )
+                # second, coerce to factor then integer to make contiguous integer index
+                mdat[,name] <- as.integer( as.factor( mdat[,name] ) )
             }
             
             # parse formula
@@ -100,7 +115,7 @@ parse_formula <- function( formula , data ) {
                 # just intercept
                 ranef[[ name ]] <- "(Intercept)"
             } else {
-                # should be class "call"
+                # should be class "call" or "name"
                 # need to convert formula to model matrix headers
                 f <- as.formula( paste( "~" , deparse( v ) , sep="" ) )
                 ranef[[ name ]] <- colnames( model.matrix( f , data ) )

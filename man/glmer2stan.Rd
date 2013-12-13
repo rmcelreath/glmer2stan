@@ -1,5 +1,5 @@
 \name{glmer2stan}
-\alias{glmer2stan,lm2stan,glm2stan,lmer2stan}
+\alias{glmer2stan}\alias{lm2stan}\alias{glm2stan}\alias{lmer2stan}
 %- Also NEED an '\alias' for EACH other topic documented here.
 \title{Define Stan model using glmer notation}
 \description{

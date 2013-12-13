@@ -88,7 +88,8 @@ varef(m1_g2s)$expection
 posterior <- extract(m1_g2s)
 str(posterior)
 
-
+# expose Stan model code
+m1_g2s@stanmodel
 ```
 
 (2) Binomial with varying intercepts

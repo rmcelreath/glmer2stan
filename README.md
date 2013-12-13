@@ -18,8 +18,8 @@ Examples
 ==========
 
 (1) Gaussian with varying intercepts and slopes
-====
 
+```
 library(lme4)
 library(glmer2stan)
 
@@ -79,3 +79,4 @@ Group: subject_index (18 groups / imbalance: 0)
   (2) Days        -0.03 7.56
 
 DIC: 1711   pDIC: 31.9   Deviance: 1647.2
+```

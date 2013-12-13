@@ -88,6 +88,28 @@ varef(m1_g2s)$expection
 # extract posterior samples
 posterior <- extract(m1_g2s)
 str(posterior)
+
+# compute posterior predictions
+pp <- stanpredict(m1_g2s,data=sleepstudy)
+str(pp)
+
+#List of 1
+# $ Reaction:List of 3
+#  ..$ mu    : num [1:180] 252 272 292 312 332 ...
+#  ..$ mu.ci : num [1:2, 1:180] 225 278 249 294 273 ...
+#  .. ..- attr(*, "dimnames")=List of 2
+#  .. .. ..$ : chr [1:2] "2.5%" "97.5%"
+#  .. .. ..$ : NULL
+#  ..$ obs.ci: num [1:2, 1:180] 195 308 216 325 238 ...
+#  .. ..- attr(*, "dimnames")=List of 2
+#  .. .. ..$ : chr [1:2] "2.5%" "97.5%"
+#  .. .. ..$ : NULL
+
+# compare to lme4 MAP/MLE predictions
+predict(m1_lme4)
+
+# plot comparison
+plot( predict(m1_lme4) , pp$Reaction$mu )
 ```
 
 You can expose the Stan model code by pulling out m1_g2s@stanmodel:

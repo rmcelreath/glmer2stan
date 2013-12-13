@@ -83,4 +83,10 @@ stanmer(m1_g2s)
 # compare varying effect estimates with:
 ranef(m1_lme4)
 varef(m1_g2s)$expection
+
+# extract posterior samples
+posterior <- extract(m1_g2s)
+str(posterior)
+
+
 ```

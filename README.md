@@ -90,3 +90,17 @@ str(posterior)
 
 
 ```
+
+(2) Binomial with varying intercepts
+
+```
+data(cbpp) # built into lme4
+
+m2_lme4 <- glmer( cbind(incidence,size-incidence) ~ period + (1|herd) , data=cbpp , family=binomial )
+
+cbpp$herd_index <- as.integer(cbpp$herd)
+m2_g2s <- glmer2stan( cbind(incidence,size-incidence) ~ period + (1|herd_index) , data=cbpp , family="binomial" )
+
+summary(m2_lme4)
+stanmer(m2_g2s)
+```

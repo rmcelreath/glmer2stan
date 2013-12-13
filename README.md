@@ -18,6 +18,7 @@ Examples
 ==========
 
 (1) Gaussian with varying intercepts and slopes
+-------
 
 ```
 library(lme4)
@@ -147,6 +148,7 @@ generated quantities{
 ```
 
 (2) Binomial with varying intercepts
+--------
 
 ```
 data(cbpp) # built into lme4

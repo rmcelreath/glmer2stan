@@ -87,9 +87,63 @@ varef(m1_g2s)$expection
 # extract posterior samples
 posterior <- extract(m1_g2s)
 str(posterior)
+```
 
-# expose Stan model code
-m1_g2s@stanmodel
+You can expose the Stan model code by pulling out m1_g2s@stanmodel:
+```
+data{
+    int N;
+    real Reaction[N];
+    real Days[N];
+    int subject_index[N];
+    int N_subject_index;
+}
+
+transformed data{
+    vector[2] zeros_subject_index;
+    for ( i in 1:2 ) zeros_subject_index[i] <- 0;
+}
+
+parameters{
+    real Intercept;
+    real beta_Days;
+    real<lower=0> sigma;
+    vector[2] vary_subject_index[N_subject_index];
+    cov_matrix[2] Sigma_subject_index;
+}
+
+model{
+    real vary[N];
+    real glm[N];
+    // Priors
+    Intercept ~ normal( 0 , 100 );
+    beta_Days ~ normal( 0 , 100 );
+    sigma ~ uniform( 0 , 100 );
+    // Varying effects
+    for ( j in 1:N_subject_index ) vary_subject_index[j] ~ multi_normal( zeros_subject_index , Sigma_subject_index );
+    // Fixed effects
+    for ( i in 1:N ) {
+        vary[i] <- vary_subject_index[subject_index[i],1]
+                + vary_subject_index[subject_index[i],2] * Days[i];
+        glm[i] <- vary[i] + Intercept
+                + beta_Days * Days[i];
+    }
+    Reaction ~ normal( glm , sigma );
+}
+
+generated quantities{
+    real dev;
+    real vary[N];
+    real glm[N];
+    dev <- 0;
+    for ( i in 1:N ) {
+        vary[i] <- vary_subject_index[subject_index[i],1]
+                + vary_subject_index[subject_index[i],2] * Days[i];
+        glm[i] <- vary[i] + Intercept
+                + beta_Days * Days[i];
+        dev <- dev + (-2) * normal_log( Reaction[i] , glm[i] , sigma );
+    }
+}
 ```
 
 (2) Binomial with varying intercepts
@@ -104,4 +158,64 @@ m2_g2s <- glmer2stan( cbind(incidence,size-incidence) ~ period + (1|herd_index) 
 
 summary(m2_lme4)
 stanmer(m2_g2s)
+```
+The Stan model code, accessed by m2_g2s@stanmodel:
+```
+data{
+    int N;
+    int incidence[N];
+    real period2[N];
+    real period3[N];
+    real period4[N];
+    int herd_index[N];
+    int bin_total[N];
+    int N_herd_index;
+}
+
+parameters{
+    real Intercept;
+    real beta_period2;
+    real beta_period3;
+    real beta_period4;
+    real vary_herd_index[N_herd_index];
+    real<lower=0> sigma_herd_index;
+}
+
+model{
+    real vary[N];
+    real glm[N];
+    // Priors
+    Intercept ~ normal( 0 , 100 );
+    beta_period2 ~ normal( 0 , 100 );
+    beta_period3 ~ normal( 0 , 100 );
+    beta_period4 ~ normal( 0 , 100 );
+    sigma_herd_index ~ uniform( 0 , 100 );
+    // Varying effects
+    for ( j in 1:N_herd_index ) vary_herd_index[j] ~ normal( 0 , sigma_herd_index );
+    // Fixed effects
+    for ( i in 1:N ) {
+        vary[i] <- vary_herd_index[herd_index[i]];
+        glm[i] <- vary[i] + Intercept
+                + beta_period2 * period2[i]
+                + beta_period3 * period3[i]
+                + beta_period4 * period4[i];
+        glm[i] <- inv_logit( glm[i] );
+    }
+    incidence ~ binomial( bin_total , glm );
+}
+
+generated quantities{
+    real dev;
+    real vary[N];
+    real glm[N];
+    dev <- 0;
+    for ( i in 1:N ) {
+        vary[i] <- vary_herd_index[herd_index[i]];
+        glm[i] <- vary[i] + Intercept
+                + beta_period2 * period2[i]
+                + beta_period3 * period3[i]
+                + beta_period4 * period4[i];
+        dev <- dev + (-2) * binomial_log( incidence[i] , bin_total[i] , inv_logit(glm[i]) );
+    }
+}
 ```

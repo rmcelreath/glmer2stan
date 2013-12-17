@@ -243,3 +243,26 @@ generated quantities{
     }
 }
 ```
+
+(3) Zero-augmented (zero-inflated) gamma model
+-------
+This is really a two-outcome non-linear factor analysis (or Gaussian process) of a sort, using varying intercepts to relate outcomes from the same individuals. It demonstrates how to specify models with more than one formula and use varying effects to link them together. This model cannot be fit with lme4, but the formula syntax still follows lme4 conventions (mostly).
+```
+data(Ache) # built into glmer2stan
+
+# prepare two outcome formula list
+the_formula <- list(
+		iszero ~ (1|hunter.id) ,
+		nonzero ~ (1|hunter.id)
+	)
+
+# note the list of family names in call to glmer2stan
+m3 <- glmer2stan( the_formula , data=Ache , family=list("binomial","gamma") )
+
+stanmer(m3)
+
+# plot varying intercepts across outcomes, showing correlation
+v <- varef(m3)
+plot( v$expectation$hunter_id[,1] , v$expectation$hunter_id[,2] , xlab="hunter effect (failures)" , ylab="hunter effect (harvests)" )
+```
+As before, you can view the Stan code by extracting m3@stanmodel.

@@ -7,6 +7,8 @@ Stan (mc-stan.org) is a Hamiltonian Monte Carlo engine for fitting Bayesian mode
 
 glmer2stan compiles design formulas, such as y ~ (1|id) + x, into Stan model code. This allows the specification of simple multilevel models, using familiar formula syntax of the kind many people have learned from popular R packages like lme4.
 
+The Stan code that glmer2stan produces is didactic, not efficient. So instead of using design matrices for varying and fixed effects, it builds out explicit additive expressions. This makes the code easier for novices to understand. But it also reduces speed a little. Since I originally conceived of glmer2stan as a teaching tool, the Stan code will probably remain didactic. But I might eventually make an option to use faster-but-opaque techniques.
+
 Status
 ==========
 

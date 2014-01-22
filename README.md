@@ -37,7 +37,7 @@ sleepstudy$subject_index <- as.integer(as.factor(sleepstudy$Subject))
 # fit with glmer2stan
 m1_g2s <- lmer2stan( Reaction ~ Days + (Days | subject_index), data=sleepstudy )
 
-# [timings for 3Ghz i5, no memory limitations]
+# [timings for 3GHz i5, no memory limitations]
 #Elapsed Time: 46.1606 seconds (Warm-up)
 #              32.3429 seconds (Sampling)
 #              78.5035 seconds (Total)

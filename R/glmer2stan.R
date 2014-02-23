@@ -1464,8 +1464,3 @@ lmer2stan <- function( formula , data , ... ) {
     glmer2stan( formula , data , family="gaussian" , ... )
 }
 
-# function to translate a "map" set of formulas into likelihood and prior for Stan
-# map() is a function in rethinking package
-map2stan <- function( flist , data , start , ... ) {
-    
-}

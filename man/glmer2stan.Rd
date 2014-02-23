@@ -3,7 +3,7 @@
 %- Also NEED an '\alias' for EACH other topic documented here.
 \title{Define Stan model using glmer notation}
 \description{
-  Using standard formula notation from \code{glmer} (\code{lme4}), defines a Stan model (\code{rstan}) and optionally samples from the posterior. Can optionally compute DIC or WAIC. Supports model families: "gaussian", "binomial", "poisson", "ordered", "gamma", and two zero-inflated families, "zigamma" and "zipoisson". A number of custom mixture and multiple-outcome models can be specified by using lists of formulas and family names.
+  Using standard formula notation from \code{glmer} (\code{lme4}), defines a Stan model (\code{rstan}) and optionally samples from the posterior. Can optionally compute DIC or WAIC. Supports model families: "gaussian", "binomial", "poisson", "ordered", "gamma", and the zero-augmented family "zigamma". A number of custom mixture and multiple-outcome models can be specified by using lists of formulas and family names.
 }
 \usage{
 glmer2stan( formula , data , family="gaussian" , varpriors="flat" , 
@@ -19,7 +19,7 @@ lmer2stan ( formula , data , ... )
 \arguments{
   \item{formula}{Model formula or list of formulas, using \code{\link{glmer}} notation for varying effects.}
   \item{data}{Data frame or list}
-  \item{family}{Model family name or list of names for outcome(s). Valid choices are: "gaussian", "binomial" (logit link), "poisson" (log link), "ordered" (cumulative logit), "gamma" (log link), "zigamma" (zero-inflated gamma, logit and log links), or "zipoisson" (zero-inflated poisson, logit and log links).}
+  \item{family}{Model family name or list of names for outcome(s). Valid choices are: "gaussian", "binomial" (logit link), "poisson" (log link), "ordered" (cumulative logit), "gamma" (log link), "zigamma" (zero-augmented gamma, logit and log links).}
   \item{varpriors}{Variance prior presets. Valid choices are \code{'weak'} and \code{'flat'}. See details below.}
   \item{sample}{Whether or not to sample from the posterior (\code{TRUE}) or just return model code (\code{FALSE})}
   \item{warmup}{rstan parameter: number of adaptation samples}
@@ -58,9 +58,7 @@ lmer2stan ( formula , data , ... )
   When choosing \code{family='ordered'}, the parameter vector \code{cutpoints} will contain the ordered intercepts. The outcome variable must be integer valued with minimum 1.
   
   Family \code{'gamma'} uses a log link on the mean of the gamma density. The rate (inverse scale) parameter for the gamma distribution is returned as \code{theta}. \code{glmer2stan} will try to guess a good initial value for \code{theta} by maximum likelihood search, but manual choice of inits may be necessary in some cases.
-  
-  Model families \code{'zigamma'} and \code{'zipoisson'} are special cases. These are shortcuts for defining two-formula zero-inflated gamma or zero-inflated poisson multilevel models. They are equivalent to passing two formulas and a list of families \code{list('binomial','gamma')} or \code{list('binomial','poisson')}. You can define these models using either a single formula with an outcome that is a mix of zeros and positive values or a list of two formulas. In the first case, a single formula, \code{glmer2stan} will automatically split the outcome into an indicator variable for zeros and another outcome containing positive values (gamma) or counts (poisson). Then it will duplicate the right hand side of the formula for both outcomes. In the second case, a list of two formulas, it uses the first to define a bernoulli (logit link) model for zero observations and the second to define either a gamma (log link) model for positive observations or a poisson (log link) model for all observed counts. In both cases, the formulas share any varying effect groups they have in common, allowing for correlations across the two models. 
-  
+    
   When using the default \code{initmethod} of \code{'zero'}, the code tries to guess good starting values for any Intercept parameters. All other fixed effects are initialized at zero. 
   
   When using \code{initmethod='lme4'} to initialize parameters, variance components may be initialized to defaults. This is necessary whenever \code{glmer} returns a boundary estimate: zero variance or -1/+1 correlation.

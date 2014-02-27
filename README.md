@@ -12,9 +12,17 @@ The Stan code that glmer2stan produces is didactic, not efficient. So instead of
 Status
 ==========
 
-Current state: Production usable. All models pass tests, DIC computations validated. Basic prediction function added, but still needs work. WAIC is in and working for single-formula models, but still needs some more thorough numerical testing, to find corner cases.
+Current state: All models pass tests, DIC computations validated. Basic prediction function added, but still needs work. WAIC is in and working for single-formula models, but still needs some more thorough numerical testing, to find corner cases.
 
-Horizon: Code will eventually need to be refactored, to reduce redundancy and clean up some of the compilation algorithm. Speed of Stan code could be improved during that refactoring.
+Horizon: I'm not planning on developing glmer2stan much further. The problem is that I find it unsatisfying both as a teaching tool and as a multilevel regression tool. 
+
+It is unsatisfying for teaching, because students don't tend use it as a way to learn the connections between Stan code and glmer formulas, but rather as a way to avoid learning Stan code. For those who are using glmer2stan as a teaching tool, it remains and will remain useful, as it exists now. I don't think everyone needs to learn Stan code, mind you. But I would like a tool that helps more in that regard.
+
+It is unsatisfying as a multilevel regression tool, because there's no natural way to allow prior specifications. And the natural default priors are the same flat (or nearly flat) priors as glmer, which leads to lots of problems with Stan's HMC. Also, complex issues like specifying covariance priors are very hard to approach at all with glmer's syntax. This isn't a criticism of glmer (which remains a great tool), but rather just a comment on how far one can reasonably push its syntax.
+
+So caught between bad defaults and no easy input syntax (other than editing Stan code directly), I'd rather give my time to another project that addresses all these issues at once. That project (map2stan) is in my other package, rethinking, and it will be described in a book I'm writing. map2stan uses templating and all the other rational things I didn't use when hacking together glmer2stan. So it'll also be able to grow as Stan grows.
+
+I think it might be worth using some glmer2stan code to translate glmer formulas into map2stan input formulas, which do lay bare all the model assumptions. But I'm still figuring out how to proceed. My primary interests are pedagogical here, so I'm trying to tune the tools so they balance convenience and understanding.
 
 Examples
 ==========
